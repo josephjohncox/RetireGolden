@@ -35,7 +35,7 @@ export const PLAN_SCHEMA_UNREPRESENTABLE_CONSTRAINTS: readonly string[] = [
   // Household ↔ people
   'household.filingStatus "marriedFilingJointly" requires exactly two people.',
   // Referential integrity (ids must resolve to a person/account in the plan)
-  'account.ownerPersonId, income.personId, insurance owner/insured/beneficiary, and careEvent.personId must reference an existing person.',
+  'account.ownerPersonId, income.personId, wage healthCoverage.coveredPersonIds, insurance owner/insured/beneficiary, and careEvent.personId must reference an existing person.',
   'retirement action IDs must be unique across current and legacy action kinds.',
   'a person ID referenced by a current retirement action must resolve uniquely before person, ownership, or linked-action checks run.',
   'an account ID referenced by a retirement action must resolve uniquely before ownership or destination checks run.',
@@ -54,6 +54,7 @@ export const PLAN_SCHEMA_UNREPRESENTABLE_CONSTRAINTS: readonly string[] = [
   // Account-level discriminated rules
   'employerMatch may be set only on employer-kind traditional/roth accounts.',
   'cliff-vesting equity compensation requires a vestDate.',
+  'a wage endYear must be on or after startYear, and employer health coverage person ids must be unique.',
   'planning-only nondeductibleBasis (Form 8606) applies only to traditional IRAs and not to inherited accounts; it is not filing-grade annual tax evidence.',
   'hsa reimburse-later accumulation requires the capByMedicalExpenses withdrawal treatment.',
   'property depreciationRecapture requires either a costBasis or an atomic purchase that establishes basis; a purchased property must be sold after its purchase year, an embedded mortgage payoff must be after purchase, the property may not also declare costBasis, and it may not combine the same modeled lifecycle with a HECM; a HECM line of credit requires a primary residence.',

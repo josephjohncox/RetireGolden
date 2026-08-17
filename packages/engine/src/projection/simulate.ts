@@ -2159,6 +2159,11 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     let taxableYieldReinvested = 0
     const distributedYieldByAccountId = new Map<string, { gross: number; distributedYieldPct: number; reinvest: boolean }>()
     const wagesByPerson = new Map<string, number>()
+    const employerHealthCoverageByPerson = new Map<
+      string,
+      Array<'employerPrimary' | 'medicarePrimary'>
+    >()
+    let employerHealthPremiums = 0
 
     for (const state of balances) {
       if (state.account.type !== 'taxable') continue
@@ -2201,11 +2206,47 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       const person = personById.get(stream.personId)!
       const s = stateOf(stream.personId)
       const stopAge = stream.endAge ?? person.retirementAge
-      if (!s.alive || (stopAge !== null && s.ageAttained >= stopAge)) continue
-      const raiseFactor = Math.pow(1 + (stream.realGrowthPct ?? 0) / 100, year - startYear)
+      if (
+        !s.alive ||
+        (stream.startYear != null && year < stream.startYear) ||
+        (stream.endYear != null && year > stream.endYear) ||
+        (stopAge !== null && s.ageAttained >= stopAge)
+      ) continue
+      const firstPaidYear = Math.max(startYear, stream.startYear ?? startYear)
+      const raiseFactor = Math.pow(
+        1 + (stream.realGrowthPct ?? 0) / 100,
+        year - firstPaidYear,
+      )
       const amount = stream.annualGross * raiseFactor * inflFactor
+      let taxableWages = amount
+      const coverage = stream.healthCoverage
+      if (
+        coverage !== undefined &&
+        coverage.coveredPersonIds.some(
+          (personId) => personById.has(personId) && stateOf(personId).alive,
+        )
+      ) {
+        const employeePremium =
+          coverage.annualEmployeePremium *
+          healthInflFactorFrom(startYear, year)
+        employerHealthPremiums += employeePremium
+        if (coverage.premiumTaxTreatment === 'preTax') {
+          taxableWages -= Math.min(taxableWages, employeePremium)
+        }
+        for (const personId of coverage.coveredPersonIds) {
+          if (!personById.has(personId) || !stateOf(personId).alive) continue
+          const active = employerHealthCoverageByPerson.get(personId) ?? []
+          active.push(coverage.medicareCoordination)
+          employerHealthCoverageByPerson.set(personId, active)
+          if (active.length === 2) {
+            warnings.add(
+              `Multiple active employer health plans cover person ${personId} in ${year}; all employee premiums were charged.`,
+            )
+          }
+        }
+      }
       incomes.wages += amount
-      ordinaryIncome += amount
+      ordinaryIncome += taxableWages
       wagesByPerson.set(stream.personId, (wagesByPerson.get(stream.personId) ?? 0) + amount)
     }
 
@@ -3061,7 +3102,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     // the whole year at once.
     const hc = plan.expenses.healthcare
     const healthInflFactor = healthInflFactorFrom(startYear, year)
-    let healthcare = 0
+    let healthcare = employerHealthPremiums
     // The ACA credit is a household calculation and a MONTHLY one: covered
     // members' premiums pool per calendar month, and each covered month earns
     // max(0, premium − expectedContribution/12) — so a transition-year member
@@ -3108,8 +3149,16 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
             : 0
     for (const s of peopleStates) {
       if (!s.alive) continue
-      const acaMonths = marketplaceMonthsBeforeMedicare(s)
-      const medicareMonths = 12 - acaMonths
+      const employerCoverage =
+        employerHealthCoverageByPerson.get(s.personId) ?? []
+      const normalMarketplaceMonths = marketplaceMonthsBeforeMedicare(s)
+      const normalMedicareMonths = 12 - normalMarketplaceMonths
+      const acaMonths = employerCoverage.length > 0
+        ? 0
+        : normalMarketplaceMonths
+      const medicareMonths = employerCoverage.includes('employerPrimary')
+        ? 0
+        : normalMedicareMonths
       if (acaMonths > 0 && hc.pre65MonthlyPremiumPerPerson > 0) {
         if (hc.applyAcaCredit) {
           for (let m = 0; m < acaMonths; m++) {
@@ -3185,7 +3234,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     if (hc.applyAcaCredit && acaContract && !exampleContractInputMismatch) {
       for (const member of acaContract.coveredMembers) {
         for (let month = 0; month < 12; month++) {
-          const enrollmentPremium = member.enrollmentPremiumByMonth[month] ?? 0
+          const enrollmentPremium =
+            employerHealthCoverageByPerson.has(member.personId)
+              ? 0
+              : member.enrollmentPremiumByMonth[month] ?? 0
           acaEnrollmentPremiums[month]! += enrollmentPremium
           if (enrollmentPremium > 0) {
             acaSlcspBenchmarkPremiums[month]! += member.slcspBenchmarkPremiumByMonth[month] ?? 0
@@ -3220,7 +3272,9 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     healthcare += acaGrossEnrollmentPremium
     const healthcareExcludingAcaEnrollment = healthcare - acaGrossEnrollmentPremium
     const healthcareExcludingMarketplacePremium =
-      healthcareExcludingAcaEnrollment - legacyMarketplacePremiumPaidDirectly
+      healthcareExcludingAcaEnrollment -
+      legacyMarketplacePremiumPaidDirectly -
+      employerHealthPremiums
     const acaInitialSupportCodes: AcaSupportCode[] = []
     if (acaActive) {
       if (isStandIn) acaInitialSupportCodes.push('tax-year-parameters-unsupported')
@@ -3603,6 +3657,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       propertyInsurance,
       propertyMaintenance,
       healthcare,
+      employerHealthPremiums,
       insurancePremiums,
       careCost,
       ltcBenefit,

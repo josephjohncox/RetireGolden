@@ -159,6 +159,43 @@ construction, or partial ownership changes. Insurance and maintenance each
 support fixed annual dollars or a percentage of opening property value. All
 three costs continue after mortgage payoff and stop in the sale year.
 
+### Dated W-2 jobs and employer healthcare
+
+Wage streams accept inclusive `startYear` and `endYear` fields. Each active
+stream remains W-2 wages, so plans can represent job transitions and concurrent
+jobs without converting compensation into generic recurring income. `endAge`
+remains an additional stop gate.
+
+A wage stream can also carry employer family coverage for the same active
+window:
+
+```ts
+{
+  type: 'wages',
+  id: 'consulting-job',
+  personId: 'person-1',
+  annualGross: 300_000,
+  startYear: 2036,
+  endYear: 2053,
+  endAge: null,
+  realGrowthPct: 0,
+  healthCoverage: {
+    annualEmployeePremium: 12_000,
+    coveredPersonIds: ['person-1', 'person-2'],
+    premiumTaxTreatment: 'preTax',
+    medicareCoordination: 'employerPrimary',
+  },
+}
+```
+
+The employee premium follows healthcare inflation and is charged once per wage
+stream, not once per covered person. Active coverage suppresses the baseline
+pre-65 marketplace premium for the named people. `employerPrimary` also
+suppresses modeled Medicare while the job is active; `medicarePrimary` charges
+Medicare alongside the employer premium. When the wage stream ends, each person
+returns to the normal marketplace/Medicare rules. A pre-tax employee premium
+reduces modeled ordinary wage income but leaves `incomes.wages` gross.
+
 A versioned JSON Schema for the `Plan` document is derived from `planSchema` and
 shipped both as a constant and as a static file, so a non-TypeScript consumer can
 learn the plan format:

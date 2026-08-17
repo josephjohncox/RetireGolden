@@ -323,6 +323,33 @@ describe('parsePlan', () => {
     expect(parsePlan(plan).ok).toBe(false)
   })
 
+  it('validates wage calendar windows and employer health coverage people', () => {
+    const plan = validCouplePlan()
+    plan.incomes.push({
+      type: 'wages',
+      id: 'job',
+      personId: 'p1',
+      annualGross: 100_000,
+      startYear: 2030,
+      endYear: 2029,
+      endAge: null,
+      realGrowthPct: 0,
+      healthCoverage: {
+        annualEmployeePremium: 10_000,
+        coveredPersonIds: ['p1', 'ghost'],
+        premiumTaxTreatment: 'preTax',
+        medicareCoordination: 'employerPrimary',
+      },
+    })
+    const result = parsePlan(plan)
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      const issues = result.issues.join('\n')
+      expect(issues).toContain('endYear must be on or after startYear')
+      expect(issues).toContain('unknown person id "ghost"')
+    }
+  })
+
   it('rejects negative balances and malformed DOBs', () => {
     const plan = validCouplePlan()
     plan.accounts[0] = { ...plan.accounts[0]!, balance: -1 } as Plan['accounts'][number]

@@ -1549,15 +1549,60 @@ export const yearEarningSchema = z.object({
   amount: nonNegative,
 })
 
+export const employeeHealthCoverageSchema = z.object({
+  /** Employee-paid annual family premium in projection-start dollars. */
+  annualEmployeePremium: nonNegative,
+  /** Household members covered by this employer plan while the wage stream is active. */
+  coveredPersonIds: z.array(idSchema).min(1),
+  /** Whether the employee premium reduces modeled ordinary wage income. */
+  premiumTaxTreatment: z.enum(['preTax', 'afterTax']),
+  /**
+   * employerPrimary: active employer coverage replaces modeled Medicare;
+   * medicarePrimary: Medicare is charged alongside the employer plan at 65+.
+   */
+  medicareCoordination: z.enum(['employerPrimary', 'medicarePrimary']),
+}).superRefine((coverage, ctx) => {
+  const seen = new Set<string>()
+  coverage.coveredPersonIds.forEach((personId, index) => {
+    if (seen.has(personId)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['coveredPersonIds', index],
+        message: 'Employer health coverage person ids must be unique.',
+      })
+    }
+    seen.add(personId)
+  })
+})
+export type EmployeeHealthCoverage = z.infer<typeof employeeHealthCoverageSchema>
+
 export const wagesIncomeSchema = z.object({
   type: z.literal('wages'),
   id: idSchema,
   personId: idSchema,
   annualGross: nonNegative,
-  /** Stop age; null = person's retirementAge. */
+  /** First paid calendar year (inclusive); null/omitted = projection start. */
+  startYear: calendarYear.nullable().optional(),
+  /** Last paid calendar year (inclusive); null/omitted = no calendar-year stop. */
+  endYear: calendarYear.nullable().optional(),
+  /** Stop age; null = person's retirementAge. Calendar and age gates both apply. */
   endAge: z.number().min(30).max(80).nullable(),
-  /** Annual real raise rate, applied on top of general inflation. */
+  /** Employer family coverage active on the same calendar/age window as these wages. */
+  healthCoverage: employeeHealthCoverageSchema.optional(),
+  /** Annual real raise rate after the stream starts, applied on top of general inflation. */
   realGrowthPct: pct.default(0),
+}).superRefine((wages, ctx) => {
+  if (
+    wages.startYear != null &&
+    wages.endYear != null &&
+    wages.endYear < wages.startYear
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['endYear'],
+      message: 'A wage stream endYear must be on or after startYear.',
+    })
+  }
 })
 
 /**
@@ -3064,6 +3109,23 @@ export const planSchema = z
           code: 'custom',
           path: ['incomes', i, 'personId'],
           message: `unknown person id "${s.personId}"`,
+        })
+      }
+      if (s.type === 'wages' && s.healthCoverage !== undefined) {
+        s.healthCoverage.coveredPersonIds.forEach((personId, personIndex) => {
+          if (!personIds.has(personId)) {
+            ctx.addIssue({
+              code: 'custom',
+              path: [
+                'incomes',
+                i,
+                'healthCoverage',
+                'coveredPersonIds',
+                personIndex,
+              ],
+              message: `unknown person id "${personId}"`,
+            })
+          }
         })
       }
     })

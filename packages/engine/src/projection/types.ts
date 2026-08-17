@@ -622,8 +622,10 @@ export interface YearExpenses {
   propertyInsurance?: number
   /** Maintenance share of propertyCosts; published by simulatePlan. */
   propertyMaintenance?: number
-  /** Pre-65 marketplace premiums net of ACA credit + Medicare (Part B incl. IRMAA, Part D surcharge, extras). */
+  /** Pre-65 marketplace, employer-plan employee premiums, and Medicare costs. */
   healthcare: number
+  /** Employee-paid premiums from active wage-linked employer coverage. */
+  employerHealthPremiums?: number
   /** Level (fixed-nominal) insurance premiums charged this year (LTC + permanent life). */
   insurancePremiums: number
   /** Gross LTC care-episode cost this year (additive spending spike, before any policy offset). */

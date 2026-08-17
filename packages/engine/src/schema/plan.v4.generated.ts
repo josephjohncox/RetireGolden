@@ -3508,6 +3508,30 @@ export const planJsonSchema: JsonSchemaDocument = {
                 "type": "number",
                 "minimum": 0
               },
+              "startYear": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1900,
+                    "maximum": 2200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "endYear": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1900,
+                    "maximum": 2200
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "endAge": {
                 "anyOf": [
                   {
@@ -3518,6 +3542,43 @@ export const planJsonSchema: JsonSchemaDocument = {
                   {
                     "type": "null"
                   }
+                ]
+              },
+              "healthCoverage": {
+                "type": "object",
+                "properties": {
+                  "annualEmployeePremium": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "coveredPersonIds": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "premiumTaxTreatment": {
+                    "type": "string",
+                    "enum": [
+                      "preTax",
+                      "afterTax"
+                    ]
+                  },
+                  "medicareCoordination": {
+                    "type": "string",
+                    "enum": [
+                      "employerPrimary",
+                      "medicarePrimary"
+                    ]
+                  }
+                },
+                "required": [
+                  "annualEmployeePremium",
+                  "coveredPersonIds",
+                  "premiumTaxTreatment",
+                  "medicareCoordination"
                 ]
               },
               "realGrowthPct": {
@@ -6130,7 +6191,7 @@ export const planJsonSchema: JsonSchemaDocument = {
   "description": "The RetireGolden engine Plan document, schemaVersion 4. This schema is DERIVED from the engine’s zod `planSchema` and describes the document’s structure (shapes, required/optional fields, types, ranges, enums, and the account/income discriminated unions as `oneOf`). It is NECESSARY BUT NOT SUFFICIENT: `parsePlan` additionally enforces cross-field constraints that JSON Schema cannot express (referential integrity of ids, discriminated funding rules, allocation weights summing to 100%, year-window ordering, and more; see the x-retiregolden-unrepresentableConstraints annotation on this schema for the full list). A document valid against this schema may still be rejected by `parsePlan`; validate through `parsePlan` (or the MCP `validate_plan` tool) before trusting a plan.",
   "x-retiregolden-unrepresentableConstraints": [
     "household.filingStatus \"marriedFilingJointly\" requires exactly two people.",
-    "account.ownerPersonId, income.personId, insurance owner/insured/beneficiary, and careEvent.personId must reference an existing person.",
+    "account.ownerPersonId, income.personId, wage healthCoverage.coveredPersonIds, insurance owner/insured/beneficiary, and careEvent.personId must reference an existing person.",
     "retirement action IDs must be unique across current and legacy action kinds.",
     "a person ID referenced by a current retirement action must resolve uniquely before person, ownership, or linked-action checks run.",
     "an account ID referenced by a retirement action must resolve uniquely before ownership or destination checks run.",
@@ -6148,6 +6209,7 @@ export const planJsonSchema: JsonSchemaDocument = {
     "annuity.purchase.fundingAccountId, pension.lumpSumElection.rolloverAccountId, and incomeFloor ladder purchase fundingAccountId must reference another existing account.",
     "employerMatch may be set only on employer-kind traditional/roth accounts.",
     "cliff-vesting equity compensation requires a vestDate.",
+    "a wage endYear must be on or after startYear, and employer health coverage person ids must be unique.",
     "planning-only nondeductibleBasis (Form 8606) applies only to traditional IRAs and not to inherited accounts; it is not filing-grade annual tax evidence.",
     "hsa reimburse-later accumulation requires the capByMedicalExpenses withdrawal treatment.",
     "property depreciationRecapture requires either a costBasis or an atomic purchase that establishes basis; a purchased property must be sold after its purchase year, an embedded mortgage payoff must be after purchase, the property may not also declare costBasis, and it may not combine the same modeled lifecycle with a HECM; a HECM line of credit requires a primary residence.",
