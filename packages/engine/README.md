@@ -199,6 +199,56 @@ Medicare alongside the employer premium. When the wage stream ends, each person
 returns to the normal marketplace/Medicare rules. A pre-tax employee premium
 reduces modeled ordinary wage income but leaves `incomes.wages` gross.
 
+### Native equity transactions, windfalls, and surplus allocation
+
+`Plan.equity` records grants, opening tax lots, and dated exercise, vest, and
+lot-directed sale transactions. The projection derives tax character rather
+than accepting a caller-supplied split:
+
+- ISO exercise price is a capital outlay, outside `YearExpenses`; the bargain
+  element (`FMV − strike`) is a signed AMT adjustment.
+- NSO exercise spread and RSU vest value are noncash ordinary compensation.
+- Sale gain uses the acquired lot's regular basis and exact acquisition date;
+  holdings under one year are short-term and older holdings are long-term.
+- A disqualifying ISO disposition moves the compensation element to ordinary
+  income and leaves the remainder as capital gain.
+- A lot marked `qsbsEligibility: 'eligible'` receives a federal section 1202
+  exclusion only after the five-year holding test. `unknown` claims no
+  exclusion. California adds federally excluded QSBS gain back to its tax base.
+- ISO AMT basis is retained on each lot and reverses the prior adjustment when
+  the lot is sold.
+
+`YearResult` separately publishes exercise outlay, sale proceeds, transaction
+activity, remaining lots, and federally excluded gain. These are capital and
+tax events, not lifestyle spending. Unknown exercise-date FMV is never inferred:
+the lot and strike payment still execute, while the missing AMT/compensation fact
+is warned and omitted.
+
+The AMT calculation includes ISO adjustments but does not yet maintain the Form
+8801 minimum-tax-credit carryforward. NSO/RSU payroll withholding is also not a
+native payroll ledger. Private-company lots are tax-state evidence, not marked
+investment accounts, so unsold private shares are not assigned a speculative
+net-worth value.
+
+A `windfall` income stream models dated cash inheritances, gifts, settlements,
+or other external cash. `taxTreatment: 'none'` is appropriate for ordinary cash
+inheritance principal; income in respect of a decedent, inherited retirement
+accounts, securities, and property remain separate models.
+
+`strategies.surplusAllocation` makes net cash deployment explicit:
+
+```ts
+{
+  cashAccountId: 'cash-reserve',
+  cashTarget: 500_000,       // projection-start dollars; inflation adjusted
+  overflowAccountId: 'brokerage',
+}
+```
+
+Each year the ledger refills the named cash account to its real target and sends
+all remaining surplus to the named taxable account, increasing taxable basis.
+Without this policy the legacy cash-first destination remains unchanged.
+
 A versioned JSON Schema for the `Plan` document is derived from `planSchema` and
 shipped both as a constant and as a static file, so a non-TypeScript consumer can
 learn the plan format:

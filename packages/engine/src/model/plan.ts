@@ -221,7 +221,22 @@ export const householdSchema = z.object({
    * schema migration. @see DOCS/features/taxes.md
    */
   capitalLossCarryforward: nonNegative.default(0),
+  /** Character-preserving Schedule D carryforwards. Do not combine with the legacy net pool. */
+  capitalLossCarryforwardShortTerm: nonNegative.optional(),
+  capitalLossCarryforwardLongTerm: nonNegative.optional(),
   people: z.array(personSchema).min(1).max(2),
+}).superRefine((household, ctx) => {
+  if (
+    household.capitalLossCarryforward > 0 &&
+    (household.capitalLossCarryforwardShortTerm !== undefined ||
+      household.capitalLossCarryforwardLongTerm !== undefined)
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['capitalLossCarryforward'],
+      message: 'legacy net capital-loss pool cannot be combined with character-specific carryforwards',
+    })
+  }
 })
 export type Household = z.infer<typeof householdSchema>
 
@@ -1718,13 +1733,116 @@ export const oneTimeIncomeSchema = z.object({
   taxTreatment: z.enum(['ordinary', 'capitalGain', 'none']),
 })
 
+/**
+ * A cash windfall received outside the ordinary income cycle. Cash inheritances
+ * are normally not federal income to the recipient; income in respect of a
+ * decedent, inherited retirement accounts, securities, and property require
+ * their own account/tax models and must not be flattened into this event.
+ */
+export const windfallIncomeSchema = z.object({
+  type: z.literal('windfall'),
+  id: idSchema,
+  label: z.string().min(1),
+  date: isoDate,
+  amount: nonNegative,
+  source: z.enum(['inheritance', 'gift', 'legalSettlement', 'other']),
+  taxTreatment: z.enum(['ordinary', 'none']),
+})
+
 export const incomeStreamSchema = z.discriminatedUnion('type', [
   wagesIncomeSchema,
   socialSecurityIncomeSchema,
   recurringIncomeSchema,
   oneTimeIncomeSchema,
+  windfallIncomeSchema,
 ])
 export type IncomeStream = z.infer<typeof incomeStreamSchema>
+
+// ---------------------------------------------------------------------------
+// Equity compensation and private-company transactions
+// ---------------------------------------------------------------------------
+
+export const equityOpeningLotSchema = z.object({
+  id: idSchema,
+  shares: z.number().positive(),
+  acquisitionDate: isoDate,
+  /** Regular-tax basis per share. */
+  regularBasisPerShare: nonNegative,
+  /** AMT basis per share after a prior ISO exercise; defaults to regular basis. */
+  amtBasisPerShare: nonNegative.optional(),
+  /** Never infer QSBS from company age, instrument, or holding period. */
+  qsbsEligibility: z.enum(['eligible', 'ineligible', 'unknown']).default('unknown'),
+})
+export type EquityOpeningLot = z.infer<typeof equityOpeningLotSchema>
+
+export const equityGrantSchema = z.object({
+  id: idSchema,
+  companyId: idSchema,
+  companyName: z.string().min(1),
+  ownerPersonId: idSchema,
+  instrument: z.enum(['iso', 'nso', 'rsu', 'espp', 'common', 'preferred']),
+  shares: z.number().positive(),
+  grantDate: isoDate.nullable(),
+  strikePrice: nonNegative,
+  vestingSchedule: z.array(z.object({
+    date: isoDate,
+    shares: z.number().positive(),
+  })).default([]),
+  /** Shares already acquired before the projection, with tax-lot facts. */
+  openingLots: z.array(equityOpeningLotSchema).default([]),
+})
+export type EquityGrant = z.infer<typeof equityGrantSchema>
+
+export const equityExerciseTransactionSchema = z.object({
+  type: z.literal('exercise'),
+  id: idSchema,
+  date: isoDate,
+  grantId: idSchema,
+  shares: z.number().positive(),
+  /** Required for NSOs; nullable for an ISO when the exercise-date FMV is unknown. */
+  fmvPerShare: nonNegative.nullable(),
+  transactionCost: nonNegative.default(0),
+  /** Stable id of the acquired share lot. */
+  lotId: idSchema,
+})
+
+export const equityVestTransactionSchema = z.object({
+  type: z.literal('vest'),
+  id: idSchema,
+  date: isoDate,
+  grantId: idSchema,
+  shares: z.number().positive(),
+  fmvPerShare: nonNegative,
+  transactionCost: nonNegative.default(0),
+  /** Stable id of the vested share lot. */
+  lotId: idSchema,
+})
+
+export const equitySaleTransactionSchema = z.object({
+  type: z.literal('sale'),
+  id: idSchema,
+  date: isoDate,
+  label: z.string().min(1).optional(),
+  pricePerShare: nonNegative,
+  transactionCost: nonNegative.default(0),
+  dispositions: z.array(z.object({
+    lotId: idSchema,
+    shares: z.number().positive(),
+  })).min(1),
+})
+
+export const equityTransactionSchema = z.discriminatedUnion('type', [
+  equityExerciseTransactionSchema,
+  equityVestTransactionSchema,
+  equitySaleTransactionSchema,
+])
+export type EquityTransaction = z.infer<typeof equityTransactionSchema>
+
+export const equityPlanSchema = z.object({
+  grants: z.array(equityGrantSchema).default([]),
+  transactions: z.array(equityTransactionSchema).default([]),
+})
+export type EquityPlan = z.infer<typeof equityPlanSchema>
 
 // ---------------------------------------------------------------------------
 // Expenses
@@ -2075,9 +2193,21 @@ export const itemizedDeductionsSchema = z.object({
 })
 export type ItemizedDeductions = z.infer<typeof itemizedDeductionsSchema>
 
+export const surplusAllocationSchema = z.object({
+  /** Cash account refilled first. */
+  cashAccountId: idSchema,
+  /** Inflation-adjusted target stated in projection-start dollars. */
+  cashTarget: nonNegative,
+  /** Remaining annual surplus is invested in this taxable account after the cash target is met. */
+  overflowAccountId: idSchema,
+})
+export type SurplusAllocation = z.infer<typeof surplusAllocationSchema>
+
 export const strategiesSchema = z.object({
   withdrawalOrder: withdrawalStrategySchema,
   rothConversion: rothConversionStrategySchema,
+  /** Optional cash-target/overflow policy for all net annual surplus. */
+  surplusAllocation: surplusAllocationSchema.optional(),
   /** Qualified charitable distributions per year (today's dollars), routed from RMDs when age-eligible. */
   qcdAnnual: nonNegative,
   /**
@@ -2313,6 +2443,8 @@ export const planSchema = z
     /** Deterministic LTC care episodes. Default [] so pre-V6 plans stay valid without a migration. */
     careEvents: z.array(careEventSchema).default([]),
     incomes: z.array(incomeStreamSchema),
+    /** Native private-company grant, lot, exercise, vest, and sale ledger. */
+    equity: equityPlanSchema.default({ grants: [], transactions: [] }),
     /** Optional TIPS-ladder income floor. Absent = no ladders (no migration needed). */
     incomeFloor: incomeFloorSchema.optional(),
     expenses: expensePlanSchema,
@@ -2375,6 +2507,10 @@ export const planSchema = z
         actionReferencedAccountIds.add(action.destinationRothAccountId)
       }
     })
+    if (plan.strategies.surplusAllocation !== undefined) {
+      actionReferencedAccountIds.add(plan.strategies.surplusAllocation.cashAccountId)
+      actionReferencedAccountIds.add(plan.strategies.surplusAllocation.overflowAccountId)
+    }
     // A lump-sum rollover target and a qualified annuity's funding source get
     // the same ambiguity protection as action-referenced accounts: their
     // ownership validations resolve the id through a map (last duplicate wins)
@@ -2427,6 +2563,181 @@ export const planSchema = z
     const accountTypeById = new Map(plan.accounts.map((a) => [a.id, a.type]))
     const accountById = new Map(plan.accounts.map((account) => [account.id, account]))
     const personById = new Map(plan.household.people.map((p) => [p.id, p]))
+
+    const surplusAllocation = plan.strategies.surplusAllocation
+    if (surplusAllocation !== undefined) {
+      const cash = accountById.get(surplusAllocation.cashAccountId)
+      const overflow = accountById.get(surplusAllocation.overflowAccountId)
+      if (cash === undefined || cash.type !== 'cash') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['strategies', 'surplusAllocation', 'cashAccountId'],
+          message: 'surplus cash target must name a cash account',
+        })
+      }
+      if (overflow === undefined || overflow.type !== 'taxable') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['strategies', 'surplusAllocation', 'overflowAccountId'],
+          message: 'surplus overflow must name a taxable account',
+        })
+      }
+    }
+
+    const grantById = new Map<string, EquityGrant>()
+    const lotShares = new Map<string, number>()
+    plan.equity.grants.forEach((grant, grantIndex) => {
+      if (grantById.has(grant.id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['equity', 'grants', grantIndex, 'id'],
+          message: `duplicate equity grant id "${grant.id}"`,
+        })
+      }
+      grantById.set(grant.id, grant)
+      if (!personIds.has(grant.ownerPersonId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['equity', 'grants', grantIndex, 'ownerPersonId'],
+          message: `unknown equity grant owner "${grant.ownerPersonId}"`,
+        })
+      }
+      const vested = grant.vestingSchedule.reduce((sum, row) => sum + row.shares, 0)
+      if (vested > grant.shares + 1e-9) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['equity', 'grants', grantIndex, 'vestingSchedule'],
+          message: 'equity vesting schedule exceeds granted shares',
+        })
+      }
+      const opening = grant.openingLots.reduce((sum, lot) => sum + lot.shares, 0)
+      if (opening > grant.shares + 1e-9) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['equity', 'grants', grantIndex, 'openingLots'],
+          message: 'opening equity lots exceed granted shares',
+        })
+      }
+      grant.openingLots.forEach((lot, lotIndex) => {
+        if (lotShares.has(lot.id)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['equity', 'grants', grantIndex, 'openingLots', lotIndex, 'id'],
+            message: `duplicate equity lot id "${lot.id}"`,
+          })
+        }
+        lotShares.set(lot.id, lot.shares)
+      })
+    })
+
+    const transactionIds = new Set<string>()
+    const exercisedByGrant = new Map<string, number>()
+    const vestedByGrant = new Map<string, number>()
+    plan.equity.transactions
+      .map((transaction, index) => ({ transaction, index }))
+      .sort((left, right) =>
+        left.transaction.date.localeCompare(right.transaction.date) ||
+        left.index - right.index,
+      )
+      .forEach(({ transaction, index }) => {
+        if (transactionIds.has(transaction.id)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['equity', 'transactions', index, 'id'],
+            message: `duplicate equity transaction id "${transaction.id}"`,
+          })
+        }
+        transactionIds.add(transaction.id)
+        if (transaction.type === 'sale') {
+          transaction.dispositions.forEach((disposition, dispositionIndex) => {
+            const available = lotShares.get(disposition.lotId)
+            if (available === undefined) {
+              ctx.addIssue({
+                code: 'custom',
+                path: ['equity', 'transactions', index, 'dispositions', dispositionIndex, 'lotId'],
+                message: `unknown or not-yet-acquired equity lot "${disposition.lotId}"`,
+              })
+              return
+            }
+            if (disposition.shares > available + 1e-9) {
+              ctx.addIssue({
+                code: 'custom',
+                path: ['equity', 'transactions', index, 'dispositions', dispositionIndex, 'shares'],
+                message: `equity sale exceeds shares available in lot "${disposition.lotId}"`,
+              })
+              return
+            }
+            lotShares.set(disposition.lotId, available - disposition.shares)
+          })
+          return
+        }
+
+        const grant = grantById.get(transaction.grantId)
+        if (grant === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['equity', 'transactions', index, 'grantId'],
+            message: `unknown equity grant "${transaction.grantId}"`,
+          })
+          return
+        }
+        if (lotShares.has(transaction.lotId)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['equity', 'transactions', index, 'lotId'],
+            message: `duplicate equity lot id "${transaction.lotId}"`,
+          })
+          return
+        }
+        if (transaction.type === 'exercise') {
+          if (grant.instrument !== 'iso' && grant.instrument !== 'nso') {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['equity', 'transactions', index, 'grantId'],
+              message: 'only ISO or NSO grants can be exercised',
+            })
+          }
+          if (grant.instrument === 'nso' && transaction.fmvPerShare === null) {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['equity', 'transactions', index, 'fmvPerShare'],
+              message: 'an NSO exercise requires exercise-date FMV',
+            })
+          }
+          const exercised = (exercisedByGrant.get(grant.id) ?? 0) + transaction.shares
+          const vested = grant.vestingSchedule.length === 0
+            ? grant.shares
+            : grant.vestingSchedule
+              .filter((row) => row.date <= transaction.date)
+              .reduce((sum, row) => sum + row.shares, 0)
+          if (exercised > vested + 1e-9 || exercised > grant.shares + 1e-9) {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['equity', 'transactions', index, 'shares'],
+              message: `equity exercise exceeds vested shares in grant "${grant.id}"`,
+            })
+          }
+          exercisedByGrant.set(grant.id, exercised)
+        } else {
+          if (grant.instrument !== 'rsu') {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['equity', 'transactions', index, 'grantId'],
+              message: 'only RSU grants can create vest transactions',
+            })
+          }
+          const vested = (vestedByGrant.get(grant.id) ?? 0) + transaction.shares
+          if (vested > grant.shares + 1e-9) {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['equity', 'transactions', index, 'shares'],
+              message: `RSU vest transactions exceed shares in grant "${grant.id}"`,
+            })
+          }
+          vestedByGrant.set(grant.id, vested)
+        }
+        lotShares.set(transaction.lotId, transaction.shares)
+      })
 
     /**
      * The document's own "as of" calendar year, or null when the stamp is not a
@@ -3349,6 +3660,7 @@ export function createEmptyPlan(opts: CreatePlanOptions = {}): Plan {
     insurance: [],
     careEvents: [],
     incomes: [],
+    equity: { grants: [], transactions: [] },
     expenses: {
       baseAnnual: 0,
       phases: [],

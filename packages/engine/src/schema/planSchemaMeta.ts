@@ -34,6 +34,7 @@ export const PLAN_SCHEMA_ID = `https://retiregolden.org/schemas/plan/v${PLAN_SCH
 export const PLAN_SCHEMA_UNREPRESENTABLE_CONSTRAINTS: readonly string[] = [
   // Household ↔ people
   'household.filingStatus "marriedFilingJointly" requires exactly two people.',
+  'the legacy net capital-loss pool cannot be combined with character-specific short- and long-term carryforwards.',
   // Referential integrity (ids must resolve to a person/account in the plan)
   'account.ownerPersonId, income.personId, wage healthCoverage.coveredPersonIds, insurance owner/insured/beneficiary, and careEvent.personId must reference an existing person.',
   'retirement action IDs must be unique across current and legacy action kinds.',
@@ -55,6 +56,8 @@ export const PLAN_SCHEMA_UNREPRESENTABLE_CONSTRAINTS: readonly string[] = [
   'employerMatch may be set only on employer-kind traditional/roth accounts.',
   'cliff-vesting equity compensation requires a vestDate.',
   'a wage endYear must be on or after startYear, and employer health coverage person ids must be unique.',
+  'surplusAllocation cashAccountId must name a cash account and overflowAccountId must name a taxable account.',
+  'equity grant and transaction IDs must be unique; grant owners must resolve; vesting/opening lots/exercises may not exceed grant or vested shares; exercise/vest transaction kinds must match the grant instrument; NSO exercise requires FMV; lot IDs must be globally unique; and sales may reference only already-acquired shares that remain unsold.',
   'planning-only nondeductibleBasis (Form 8606) applies only to traditional IRAs and not to inherited accounts; it is not filing-grade annual tax evidence.',
   'hsa reimburse-later accumulation requires the capByMedicalExpenses withdrawal treatment.',
   'property depreciationRecapture requires either a costBasis or an atomic purchase that establishes basis; a purchased property must be sold after its purchase year, an embedded mortgage payoff must be after purchase, the property may not also declare costBasis, and it may not combine the same modeled lifecycle with a HECM; a HECM line of credit requires a primary residence.',

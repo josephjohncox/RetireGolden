@@ -39,6 +39,8 @@ interface Scalars {
   unassignedCash: number
   priorYearPortfolioReturnPct: number
   capitalLossPool: number
+  shortTermCapitalLossPool: number
+  longTermCapitalLossPool: number
   hsaReimbursablePool: number
   depletionYear: number | null
   conversionNontaxable: number
@@ -87,6 +89,8 @@ function bindings(): SimulatorAnnualPassStateBindings {
     unassignedCash: 1_000,
     priorYearPortfolioReturnPct: 5,
     capitalLossPool: 2_000,
+    shortTermCapitalLossPool: 500,
+    longTermCapitalLossPool: 600,
     hsaReimbursablePool: 300,
     depletionYear: null,
     conversionNontaxable: 40,
@@ -155,6 +159,8 @@ function bindings(): SimulatorAnnualPassStateBindings {
     unassignedCash: valueBinding(scalars, 'unassignedCash'),
     priorYearPortfolioReturnPct: valueBinding(scalars, 'priorYearPortfolioReturnPct'),
     capitalLossPool: valueBinding(scalars, 'capitalLossPool'),
+    shortTermCapitalLossPool: valueBinding(scalars, 'shortTermCapitalLossPool'),
+    longTermCapitalLossPool: valueBinding(scalars, 'longTermCapitalLossPool'),
     hsaReimbursablePool: valueBinding(scalars, 'hsaReimbursablePool'),
     depletionYear: valueBinding(scalars, 'depletionYear'),
     conversionNontaxable: valueBinding(scalars, 'conversionNontaxable'),
@@ -199,6 +205,8 @@ function annualPassStateBytes(
       unassignedCash: state.unassignedCash.read(),
       priorYearPortfolioReturnPct: state.priorYearPortfolioReturnPct.read(),
       capitalLossPool: state.capitalLossPool.read(),
+      shortTermCapitalLossPool: state.shortTermCapitalLossPool.read(),
+      longTermCapitalLossPool: state.longTermCapitalLossPool.read(),
       hsaReimbursablePool: state.hsaReimbursablePool.read(),
       depletionYear: state.depletionYear.read(),
       conversionNontaxable: state.conversionNontaxable.read(),

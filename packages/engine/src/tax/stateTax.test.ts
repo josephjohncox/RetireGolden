@@ -28,6 +28,36 @@ describe('computeStateTax — code paths', () => {
     expect(computeStateTax(pack('FL'), input({ ordinaryIncome: 200_000, capitalGains: 50_000 }))).toBe(0)
   })
 
+  it('adds federally excluded QSBS gain back for California only', () => {
+    const caWithout = computeStateTax(
+      pack('CA'),
+      input({ state: 'CA', ordinaryIncome: 100_000 }),
+    )
+    const caWith = computeStateTax(
+      pack('CA'),
+      input({
+        state: 'CA',
+        ordinaryIncome: 100_000,
+        stateCapitalGainAddback: 1_000_000,
+      }),
+    )
+    const nyWithout = computeStateTax(
+      pack('NY'),
+      input({ state: 'NY', ordinaryIncome: 100_000 }),
+    )
+    const nyWith = computeStateTax(
+      pack('NY'),
+      input({
+        state: 'NY',
+        ordinaryIncome: 100_000,
+        stateCapitalGainAddback: 1_000_000,
+      }),
+    )
+
+    expect(caWith).toBeGreaterThan(caWithout)
+    expect(nyWith).toBeCloseTo(nyWithout, 6)
+  })
+
   it('flat state with a full retirement exclusion taxes only non-retirement income', () => {
     const pa = pack('PA')
     // 100k all retirement income, both age-eligible → fully excluded → $0.

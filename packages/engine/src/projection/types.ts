@@ -68,8 +68,12 @@ export interface TaxYearInput {
   filingStatus: ProjectedFilingStatus
   /** Wages, traditional withdrawals, pension/annuity taxable parts, taxable recurring/one-time income. */
   ordinaryIncome: number
+  /** Signed net short-term capital result, taxed at ordinary federal rates. */
+  shortTermCapitalGains?: number
   /** Signed realized long-term capital result; losses are negative. */
   capitalGains: number
+  /** Federally excluded gain that a nonconforming state still taxes, such as California QSBS gain. */
+  stateCapitalGainAddback?: number
   /** Raw signed capital result before federal carryforward netting; used by nonconforming states. */
   realizedCapitalGainsBeforeCarryforward?: number
   /** Taxable interest generated in taxable brokerage accounts (already included in ordinaryIncome). */
@@ -144,9 +148,10 @@ export interface TaxYearInput {
     charitable: number
   }
   /**
-   * Advanced calculator-only AMT preference/adjustment items. Projection does
-   * not populate this from Plan fields today; the federal tax calculator already
-   * derives standard-deduction and itemized-SALT add-backs from normal inputs.
+   * Signed AMT preference/adjustment items. Positive ISO bargain elements raise
+   * AMTI; a later sale can supply the negative regular-basis/AMT-basis reversal.
+   * The federal calculator separately derives standard-deduction and itemized-
+   * SALT add-backs from normal inputs.
    */
   amtPreferenceItems?: number
   /**
@@ -600,6 +605,10 @@ export interface YearIncomes {
   tipsLadder: number
   recurring: number
   oneTime: number
+  /** Gross proceeds from native equity sale transactions. */
+  equityProceeds?: number
+  /** Noncash NSO spread or RSU vest compensation included in ordinary tax income. */
+  equityCompensationIncome?: number
   taxableInterest: number
   ordinaryDividends: number
   qualifiedDividends: number
@@ -1770,8 +1779,18 @@ export interface YearResult {
   capitalLossUsedAgainstOrdinary: number
   /** Capital-loss carryforward balance carried into next year. */
   capitalLossCarryforwardRemaining: number
-  /** Surplus cashflow invested (into cash, else taxable, else unassigned). */
+  /** Surplus cashflow invested under the configured cash-target/overflow policy. */
   surplusInvested: number
+  /** Exercise price and transaction costs funded for native equity acquisitions. */
+  equityAcquisitionOutlay?: number
+  /** Net cash proceeds from native equity sales. */
+  equitySaleProceeds?: number
+  /** Native equity transaction facts executed this year. */
+  equityTransactions?: readonly Readonly<import('./equityTransactions.js').EquityTransactionActivity>[]
+  /** Remaining private-company tax lots after this year's transactions. */
+  equityHoldings?: readonly Readonly<import('./equityTransactions.js').EquityHoldingSnapshot>[]
+  /** Federal gain excluded under the explicit QSBS facts this year. */
+  equityFederalExcludedGain?: number
   /**
    * Cash/down payments funded for property purchases this year. A capital
    * transaction, not spending: excluded from YearExpenses and spending success.

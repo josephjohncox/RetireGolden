@@ -10,6 +10,8 @@ export const SIMULATOR_ANNUAL_PASS_VALUE_BINDING_KEYS = [
   'unassignedCash',
   'priorYearPortfolioReturnPct',
   'capitalLossPool',
+  'shortTermCapitalLossPool',
+  'longTermCapitalLossPool',
   'hsaReimbursablePool',
   'depletionYear',
   'conversionNontaxable',

@@ -6,6 +6,7 @@ import { EARLIEST_PACK_YEAR, LATEST_PACK_YEAR, packForYear } from '../params/ind
 import type { TaxCalculator, TaxYearInput } from '../projection/types.js'
 import {
   applyCapitalLossCarryforward,
+  applyCapitalLossCarryforwardByCharacter,
   combineTaxCalculators,
   computeFederalTax,
   createFederalTaxCalculator,
@@ -1365,5 +1366,84 @@ describe('indexed federal figures in a stand-in year', () => {
 
     expect(d.niit).toBeCloseTo(3_800, 6)
     expect(d.niit).not.toBeCloseTo(7_600, 6)
+  })
+})
+
+describe('character-specific capital-loss carryforward', () => {
+  it('preserves short- and long-term residual gain instead of pooling their rates', () => {
+    const result = applyCapitalLossCarryforwardByCharacter(
+      500_000,
+      60_000,
+      475_000,
+      600_000,
+      1_000_000,
+      3_000,
+    )
+
+    expect(result.shortTermCapitalGain).toBe(100_000)
+    expect(result.longTermCapitalGain).toBe(940_000)
+    expect(result.usedAgainstGains).toBe(560_000)
+    expect(result.usedAgainstOrdinary).toBe(0)
+    expect(result.remainingShortTermLoss).toBe(0)
+    expect(result.remainingLongTermLoss).toBe(0)
+  })
+
+  it('uses the ordinary deduction short-term first and carries both characters', () => {
+    const result = applyCapitalLossCarryforwardByCharacter(
+      4_000,
+      5_000,
+      100_000,
+      0,
+      0,
+      3_000,
+    )
+
+    expect(result.longTermCapitalGain).toBe(-3_000)
+    expect(result.usedAgainstOrdinary).toBe(3_000)
+    expect(result.remainingShortTermLoss).toBe(1_000)
+    expect(result.remainingLongTermLoss).toBe(5_000)
+  })
+})
+
+describe('equity transaction tax character', () => {
+  it('taxes short-term gains at ordinary rates instead of LTCG rates', () => {
+    const shortTerm = computeFederalTax(input({
+      ordinaryIncome: 100_000,
+      shortTermCapitalGains: 50_000,
+      capitalGains: 0,
+    }))
+    const longTerm = computeFederalTax(input({
+      ordinaryIncome: 100_000,
+      capitalGains: 50_000,
+    }))
+
+    expect(shortTerm.preferentialIncome).toBe(0)
+    expect(shortTerm.ordinaryTaxable).toBeGreaterThan(longTerm.ordinaryTaxable)
+    expect(shortTerm.totalTax).toBeGreaterThan(longTerm.totalTax)
+  })
+
+  it('accepts a signed ISO AMT adjustment and reverses it on disposition', () => {
+    const exercise = computeFederalTax(input({
+      filingStatus: 'marriedFilingJointly',
+      ordinaryIncome: 475_000,
+      amtPreferenceItems: 160_000,
+    }))
+    const withoutExercise = computeFederalTax(input({
+      filingStatus: 'marriedFilingJointly',
+      ordinaryIncome: 475_000,
+    }))
+    const reversal = computeFederalTax(input({
+      filingStatus: 'marriedFilingJointly',
+      ordinaryIncome: 475_000,
+      amtPreferenceItems: -160_000,
+    }))
+
+    expect(exercise.amtPreferenceItems).toBeGreaterThan(withoutExercise.amtPreferenceItems)
+    expect(exercise.alternativeMinimumTaxableIncome).toBeGreaterThan(
+      withoutExercise.alternativeMinimumTaxableIncome,
+    )
+    expect(reversal.alternativeMinimumTaxableIncome).toBeLessThan(
+      withoutExercise.alternativeMinimumTaxableIncome,
+    )
   })
 })

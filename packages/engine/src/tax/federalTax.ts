@@ -439,14 +439,94 @@ export function applyCapitalLossCarryforward(
   }
 }
 
+export interface CharacterCapitalLossNetting {
+  ordinaryAfter: number
+  shortTermCapitalGain: number
+  longTermCapitalGain: number
+  usedAgainstGains: number
+  usedAgainstOrdinary: number
+  remainingShortTermLoss: number
+  remainingLongTermLoss: number
+}
+
+/**
+ * Character-preserving Schedule D netting. Opening short- and long-term loss
+ * carryovers first join the corresponding current-year result; opposite signs
+ * then cross-net. A residual net loss deducts up to the annual limit against
+ * ordinary income, consuming short-term loss first and preserving both
+ * remaining characters for the next year.
+ */
+export function applyCapitalLossCarryforwardByCharacter(
+  shortTermCarryforward: number,
+  longTermCarryforward: number,
+  ordinaryIncome: number,
+  currentShortTermResult: number,
+  currentLongTermResult: number,
+  ordinaryOffsetLimit: number,
+): CharacterCapitalLossNetting {
+  const openingShort = Math.max(0, shortTermCarryforward)
+  const openingLong = Math.max(0, longTermCarryforward)
+  const currentShortLoss = Math.max(0, -currentShortTermResult)
+  const currentLongLoss = Math.max(0, -currentLongTermResult)
+  let netShort = currentShortTermResult - openingShort
+  let netLong = currentLongTermResult - openingLong
+
+  if (netShort > 0 && netLong < 0) {
+    const offset = Math.min(netShort, -netLong)
+    netShort -= offset
+    netLong += offset
+  } else if (netShort < 0 && netLong > 0) {
+    const offset = Math.min(-netShort, netLong)
+    netShort += offset
+    netLong -= offset
+  }
+
+  let remainingShortTermLoss = Math.max(0, -netShort)
+  let remainingLongTermLoss = Math.max(0, -netLong)
+  const usedAgainstOrdinary = Math.min(
+    remainingShortTermLoss + remainingLongTermLoss,
+    Math.max(0, ordinaryOffsetLimit),
+  )
+  const shortDeduction = Math.min(
+    remainingShortTermLoss,
+    usedAgainstOrdinary,
+  )
+  remainingShortTermLoss -= shortDeduction
+  remainingLongTermLoss -= usedAgainstOrdinary - shortDeduction
+
+  const usedAgainstGains = Math.max(
+    0,
+    openingShort +
+      openingLong +
+      currentShortLoss +
+      currentLongLoss -
+      remainingShortTermLoss -
+      remainingLongTermLoss -
+      usedAgainstOrdinary,
+  )
+
+  return {
+    ordinaryAfter: Math.max(0, ordinaryIncome),
+    shortTermCapitalGain: Math.max(0, netShort),
+    longTermCapitalGain:
+      Math.max(0, netLong) - usedAgainstOrdinary,
+    usedAgainstGains,
+    usedAgainstOrdinary,
+    remainingShortTermLoss,
+    remainingLongTermLoss,
+  }
+}
+
 export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
   const { year, filingStatus } = input
   const taxStatus = taxParameterFilingStatus(filingStatus)
   const ordinary = Math.max(0, input.ordinaryIncome)
-  // `capitalGains` is signed: after a carryforward absorbs realized gains, the
-  // deductible net loss (≤ the annual limit) arrives negative — the 1040 carries
-  // it on the capital-gain line, so it reduces AGI / provisional income / taxable
-  // SS / MAGI even when there is little or no other income.
+  // A net short-term result keeps capital character for Schedule D/netting but
+  // is taxed with ordinary income after it reaches taxable income.
+  const shortTermCapital = input.shortTermCapitalGains ?? 0
+  // `capitalGains` is signed long-term capital: after a carryforward absorbs
+  // realized gains, the deductible net loss (≤ the annual limit) arrives
+  // negative and reduces AGI / provisional income / MAGI.
   const netCapital = input.capitalGains
   const gains = Math.max(0, netCapital)
   const qualifiedDividends = Math.max(0, input.qualifiedDividends ?? 0)
@@ -458,7 +538,7 @@ export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
   // and leaves the statutorily unindexed figures alone at any scale.
   const pack = indexFederalTaxPack(publishedPack, input.inflationScale ?? 1)
 
-  const agiExcludingSs = ordinary + netCapital + qualifiedDividends // a net capital loss can drive this below zero
+  const agiExcludingSs = ordinary + shortTermCapital + netCapital + qualifiedDividends // a net capital loss can drive this below zero
   const taxableSs = taxableSocialSecurity(
     pack,
     taxStatus,
@@ -527,7 +607,7 @@ export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
   // 37 (the senior deduction alone, not the rest of that schedule) from total
   // deductions with no itemized-or-standard condition attached.
   const disallowedDeductionAddback = (useItemized ? 0 : standardBase) + senior
-  const amtPreferenceItems = Math.max(0, input.amtPreferenceItems ?? 0) + saltPreference + disallowedDeductionAddback
+  const amtPreferenceItems = (input.amtPreferenceItems ?? 0) + saltPreference + disallowedDeductionAddback
   const alternativeMinimumTaxableIncome = Math.max(0, taxableIncome + amtPreferenceItems)
   const amtExemption = amtExemptionAmount(pack, taxStatus, alternativeMinimumTaxableIncome)
   const amtTaxableExcess = Math.max(0, alternativeMinimumTaxableIncome - amtExemption)
@@ -536,7 +616,7 @@ export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
   const alternativeMinimumTax = Math.max(0, tmt - regularIncomeTax)
 
   const investmentIncome =
-    gains + qualifiedDividends + Math.max(0, input.taxableInterestIncome ?? 0) + Math.max(0, input.ordinaryDividends ?? 0)
+    Math.max(0, shortTermCapital) + gains + qualifiedDividends + Math.max(0, input.taxableInterestIncome ?? 0) + Math.max(0, input.ordinaryDividends ?? 0)
   const niitBase = Math.min(investmentIncome, Math.max(0, magi - pack.niit.magiThreshold[taxStatus]))
   const niit = niitBase * (pack.niit.ratePct / 100)
 
@@ -566,7 +646,7 @@ export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
     zeroRateLtcgHeadroom: zeroRateLtcgHeadroom(
       pack,
       taxStatus,
-      ordinary + Math.min(0, netCapital),
+      ordinary + shortTermCapital + Math.min(0, netCapital),
       gains,
       qualifiedDividends,
       ss,

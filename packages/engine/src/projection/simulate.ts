@@ -207,8 +207,14 @@ import {
   type AcaHouseholdMagiResult,
   type AcaResult,
 } from '../tax/aca.js'
-import { applyCapitalLossCarryforward, computeFederalTax, taxableSocialSecurity } from '../tax/federalTax.js'
+import {
+  applyCapitalLossCarryforward,
+  applyCapitalLossCarryforwardByCharacter,
+  computeFederalTax,
+  taxableSocialSecurity,
+} from '../tax/federalTax.js'
 import { medicareAnnualPremiumPerPerson } from '../tax/medicare.js'
+import { buildEquityTransactionLedger } from './equityTransactions.js'
 import {
   taxParameterFilingStatus,
   type MarketSeries,
@@ -719,6 +725,8 @@ function planWithdrawals(
 export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResult {
   const { startYear, taxCalculator, market } = opts
   const warnings = new Set<string>()
+  const equityLedger = buildEquityTransactionLedger(plan.equity)
+  for (const warning of equityLedger.warnings) warnings.add(warning)
   const inflation = plan.assumptions.inflationPct / 100
   const people = plan.household.people
   const primary = people[0]!
@@ -1062,6 +1070,13 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
   // today's $ but treated as flat nominal (capital losses never index), so it's
   // not inflation-scaled. @see DOCS/features/taxes.md
   let capitalLossPool = plan.household.capitalLossCarryforward
+  const characterCapitalLosses =
+    plan.household.capitalLossCarryforwardShortTerm !== undefined ||
+    plan.household.capitalLossCarryforwardLongTerm !== undefined
+  let shortTermCapitalLossPool =
+    plan.household.capitalLossCarryforwardShortTerm ?? 0
+  let longTermCapitalLossPool =
+    plan.household.capitalLossCarryforwardLongTerm ?? 0
   // Roth basis pools (contributions + conversion 5-year clocks) driving the Roth
   // ordering rules. The IRS aggregates an owner's Roth IRAs for ordering, so all
   // of one owner's Roth IRAs share a single pool; employer Roth (401k) accounts
@@ -1190,21 +1205,52 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
             : 0,
       )[0]
 
-  // Preserve cash-before-taxable legacy priority while removing plan-array
-  // order as the tie-breaker within either category.
-  const surplusDepositTarget =
+  // Preserve the legacy cash-before-taxable policy when no explicit allocation
+  // exists. A configured policy fills one real-dollar cash target, then routes
+  // every additional net annual dollar to the named taxable account.
+  const legacySurplusDepositTarget =
     stableDepositTarget('cash') ?? stableDepositTarget('taxable')
 
-  const deposit = (amount: number) => {
+  const creditDeposit = (target: BalanceState, amount: number): void => {
     if (amount <= 0) return
-    const target = surplusDepositTarget
+    target.balance += amount
+    if (target.account.type === 'taxable' || target.account.type === 'equityComp') {
+      target.costBasis += amount
+    }
+  }
+
+  const deposit = (amount: number, inflationScale = 1) => {
+    if (amount <= 0) return
+    const policy = plan.strategies.surplusAllocation
+    if (policy !== undefined) {
+      const cash = balances.find(
+        (state) =>
+          state.account.id === policy.cashAccountId &&
+          state.account.type === 'cash',
+      )
+      const overflow = balances.find(
+        (state) =>
+          state.account.id === policy.overflowAccountId &&
+          state.account.type === 'taxable',
+      )
+      if (cash !== undefined && overflow !== undefined) {
+        const cashNeed = Math.max(
+          0,
+          policy.cashTarget * inflationScale - cash.balance,
+        )
+        const toCash = Math.min(amount, cashNeed)
+        creditDeposit(cash, toCash)
+        creditDeposit(overflow, amount - toCash)
+        return
+      }
+    }
+    const target = legacySurplusDepositTarget
     if (!target) {
       warnings.add('Surplus cash had no cash/taxable account to land in; tracked as unassigned (0% growth).')
       unassignedCash += amount
       return
     }
-    target.balance += amount
-    if (target.account.type === 'taxable' || target.account.type === 'equityComp') target.costBasis += amount
+    creditDeposit(target, amount)
   }
 
   // Resolve each SS stream's PIA once: entered directly, or derived from the
@@ -1522,6 +1568,12 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
 
   for (let year = startYear; year <= endYear; year++) {
     const inflFactor = inflFactorFrom(startYear, year)
+    const equityYear = equityLedger.byYear.get(year)
+    const equityHoldings = [...equityLedger.byYear.entries()]
+      .filter(([ledgerYear]) => ledgerYear <= year)
+      .sort(([left], [right]) => left - right)
+      .at(-1)?.[1].holdings ?? []
+    for (const warning of equityYear?.warnings ?? []) warnings.add(warning)
     const { pack, isStandIn } = packForYear(year)
     const limitGrowth = limitScale(pack, isStandIn, year)
     const annualRetirementRuntimeOccurrences:
@@ -2144,6 +2196,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       tipsLadder: 0,
       recurring: 0,
       oneTime: 0,
+      equityProceeds: 0,
+      equityCompensationIncome: 0,
       taxableInterest: 0,
       ordinaryDividends: 0,
       qualifiedDividends: 0,
@@ -2263,7 +2317,20 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         incomes.oneTime += stream.amount
         if (stream.taxTreatment === 'ordinary') ordinaryIncome += stream.amount
         if (stream.taxTreatment === 'capitalGain') oneTimeGains += stream.amount
+      } else if (stream.type === 'windfall') {
+        if (Number(stream.date.slice(0, 4)) !== year) continue
+        incomes.oneTime += stream.amount
+        if (stream.taxTreatment === 'ordinary') ordinaryIncome += stream.amount
       }
+    }
+
+    // Native equity transactions are capital events, not lifestyle goals. Sale
+    // proceeds are cash; only derived tax character enters taxable income.
+    if (equityYear !== undefined) {
+      incomes.equityProceeds = equityYear.cashProceeds
+      incomes.equityCompensationIncome = equityYear.ordinaryIncome
+      ordinaryIncome += equityYear.ordinaryIncome
+      oneTimeGains += equityYear.longTermCapitalGain
     }
 
     // Pass 3: Social Security. Benefits are computed for everyone (a deceased
@@ -2903,6 +2970,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       incomes.tipsLadder +
       incomes.recurring +
       incomes.oneTime +
+      (incomes.equityProceeds ?? 0) +
       incomes.taxableYield +
       incomes.taxExemptInterest
 
@@ -4100,6 +4168,9 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       (sum, candidate) => sum + candidate.cashOutlay,
       0,
     )
+    const equityAcquisitionOutlay = equityYear?.cashOutlay ?? 0
+    const totalAcquisitionOutlay = (): number =>
+      propertyAcquisitionOutlay + equityAcquisitionOutlay
     const skipPropertyAcquisitionBatch = (): void => {
       if (!propertyAcquisitionBatchExecutes) return
       propertyAcquisitionBatchExecutes = false
@@ -7070,12 +7141,67 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       oneTimeGains +
       rebalanceRealizedGains +
       retirementActionCapitalGainOrLoss
+    const shortTermCapitalResult = equityYear?.shortTermCapitalGain ?? 0
+    const applyAnnualCapitalLosses = (
+      ordinary: number,
+      longTermCapital: number,
+    ) => {
+      if (characterCapitalLosses) {
+        const characterized = applyCapitalLossCarryforwardByCharacter(
+          shortTermCapitalLossPool,
+          longTermCapitalLossPool,
+          ordinary,
+          shortTermCapitalResult,
+          longTermCapital,
+          pack.federalTax.capitalLossOrdinaryOffsetLimit,
+        )
+        return {
+          ordinaryAfter: characterized.ordinaryAfter,
+          shortTermCapitalGain: characterized.shortTermCapitalGain,
+          netCapitalGain: characterized.longTermCapitalGain,
+          usedAgainstGains: characterized.usedAgainstGains,
+          usedAgainstOrdinary: characterized.usedAgainstOrdinary,
+          remaining:
+            characterized.remainingShortTermLoss +
+            characterized.remainingLongTermLoss,
+          remainingShortTermLoss: characterized.remainingShortTermLoss,
+          remainingLongTermLoss: characterized.remainingLongTermLoss,
+        }
+      }
+
+      let availableLoss = capitalLossPool
+      let shortTermCapitalGain = 0
+      let shortTermUsedAgainstGains = 0
+      if (shortTermCapitalResult >= 0) {
+        shortTermUsedAgainstGains = Math.min(
+          availableLoss,
+          shortTermCapitalResult,
+        )
+        availableLoss -= shortTermUsedAgainstGains
+        shortTermCapitalGain =
+          shortTermCapitalResult - shortTermUsedAgainstGains
+      } else {
+        availableLoss += -shortTermCapitalResult
+      }
+      const longTerm = applyCapitalLossCarryforward(
+        availableLoss,
+        ordinary,
+        longTermCapital,
+        pack.federalTax.capitalLossOrdinaryOffsetLimit,
+      )
+      return {
+        ...longTerm,
+        shortTermCapitalGain,
+        usedAgainstGains:
+          longTerm.usedAgainstGains + shortTermUsedAgainstGains,
+        remainingShortTermLoss: 0,
+        remainingLongTermLoss: longTerm.remaining,
+      }
+    }
     const netCapitalForPreWithdrawalSizing =
-      applyCapitalLossCarryforward(
-        capitalLossPool,
+      applyAnnualCapitalLosses(
         incomeBeforeConversion,
         preWithdrawalCapitalResult,
-        pack.federalTax.capitalLossOrdinaryOffsetLimit,
       ).netCapitalGain
 
     const assumedLine8ByOwner = new Map<string, {
@@ -7184,23 +7310,24 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         preConversionInflows -
         expenses.total -
         contributions -
-        propertyAcquisitionOutlay
+        totalAcquisitionOutlay()
       const headroom = Math.max(0, netLiquid - floorNominal)
       const taxOf = (grossConversion: number): number => {
         const extraOrdinary = conversionTaxableAmountForGross(
           grossConversion,
         )
-        const netted = applyCapitalLossCarryforward(
-          capitalLossPool,
+        const netted = applyAnnualCapitalLosses(
           Math.max(0, incomeBeforeConversion + extraOrdinary),
           preWithdrawalCapitalResult,
-          pack.federalTax.capitalLossOrdinaryOffsetLimit,
         )
         return taxCalculator.compute({
           year,
           filingStatus: filingStatusForYear,
           ordinaryIncome: netted.ordinaryAfter,
+          shortTermCapitalGains: netted.shortTermCapitalGain,
           capitalGains: netted.netCapitalGain,
+          stateCapitalGainAddback: equityYear?.stateCapitalGainAddback ?? 0,
+          amtPreferenceItems: equityYear?.amtAdjustment ?? 0,
           realizedCapitalGainsBeforeCarryforward:
             preWithdrawalCapitalResult,
           taxableInterestIncome: incomes.taxableInterest + ladderTaxableInterest,
@@ -7853,10 +7980,9 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     // Capital-loss carryforward (today's start-of-year pool, constant across the
     // iteration); netting reduces ordinary + gains before both federal and state
     // tax so the AGI cascade (taxable SS, IRMAA, ACA, state) falls out for free.
-    const lossOffsetLimit = pack.federalTax.capitalLossOrdinaryOffsetLimit
     let spendingNeedBeforeTax = Math.max(
       0,
-      expenses.total + contributions + propertyAcquisitionOutlay - cashInflows,
+      expenses.total + contributions + totalAcquisitionOutlay() - cashInflows,
     )
     let acaEvaluationCount = 0
     const evaluateWithdrawalNeed = (need: number, forceGrossAca = false) => {
@@ -7869,7 +7995,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       const iraNontaxableProbe = iraCharacterProbe.nontaxable
       let candidateHsaCap = hsaQualifiedCap
       let hsaProbe = hsaEffect(withdrawalPlan.byAccountId, candidateHsaCap)
-      let nettedProbe!: ReturnType<typeof applyCapitalLossCarryforward>
+      let nettedProbe!: ReturnType<typeof applyAnnualCapitalLosses>
       let tax = 0
       let acaMagiProbe: AcaHouseholdMagiResult | null = null
       let acaQuote: AcaResult | null = null
@@ -7880,21 +8006,22 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       // excluded from the qualified-expense cap, so the supported model is
       // normally stable immediately; the bound remains defensive.
       for (let hsaPass = 0; hsaPass < 16; hsaPass++) {
-        nettedProbe = applyCapitalLossCarryforward(
-          capitalLossPool,
+        nettedProbe = applyAnnualCapitalLosses(
           ordinaryBase +
             withdrawalPlan.byCategory.traditional -
             iraNontaxableProbe +
             rothEffect.taxableOrdinary +
             hsaProbe.taxableOrdinary,
           preWithdrawalCapitalResult + withdrawalPlan.realizedGains,
-          lossOffsetLimit,
         )
         const taxInput = {
           year,
           filingStatus: filingStatusForYear,
           ordinaryIncome: nettedProbe.ordinaryAfter,
+          shortTermCapitalGains: nettedProbe.shortTermCapitalGain,
           capitalGains: nettedProbe.netCapitalGain,
+          stateCapitalGainAddback: equityYear?.stateCapitalGainAddback ?? 0,
+          amtPreferenceItems: equityYear?.amtAdjustment ?? 0,
           realizedCapitalGainsBeforeCarryforward:
             preWithdrawalCapitalResult + withdrawalPlan.realizedGains,
           taxableInterestIncome: incomes.taxableInterest + ladderTaxableInterest,
@@ -8015,7 +8142,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           expenses.total +
             (candidateHealthcare - healthcare) +
             contributions +
-            propertyAcquisitionOutlay +
+            totalAcquisitionOutlay() +
             tax +
             penalties -
             cashInflows,
@@ -8136,7 +8263,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       cashInflows = baseCashInflows
       spendingNeedBeforeTax = Math.max(
         0,
-        expenses.total + contributions + propertyAcquisitionOutlay - cashInflows,
+        expenses.total + contributions + totalAcquisitionOutlay() - cashInflows,
       )
       if (coordinatedHecmCapacity > EPSILON && spendingNeedBeforeTax > EPSILON) {
         let candidateDraw = 0
@@ -8146,7 +8273,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           const probe = solveFundingRoot(
             Math.max(
               0,
-              expenses.total + contributions + propertyAcquisitionOutlay - cashInflows,
+              expenses.total + contributions + totalAcquisitionOutlay() - cashInflows,
             ),
           )
           if (!probe.converged) break
@@ -8156,7 +8283,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
             expenses.total +
               (probe.evaluation.healthcare - healthcare) +
               contributions +
-              propertyAcquisitionOutlay -
+              totalAcquisitionOutlay() -
               baseCashInflows,
           )
           const nextDraw = Math.min(coordinatedHecmCapacity, postCreditPreTaxNeed)
@@ -8171,7 +8298,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         cashInflows = baseCashInflows + hecmDraw
         spendingNeedBeforeTax = Math.max(
           0,
-          expenses.total + contributions + propertyAcquisitionOutlay - cashInflows,
+          expenses.total + contributions + totalAcquisitionOutlay() - cashInflows,
         )
       }
       // Probes are implementation detail; convergence diagnostics describe the
@@ -8329,7 +8456,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     const shortfallAfterHecm = Math.max(0, withdrawalPlan.shortfall - hecmShortfallDraw)
     const surplus = Math.max(
       0,
-      cashInflows - expenses.total - contributions - propertyAcquisitionOutlay - tax - penalties,
+      cashInflows - expenses.total - contributions - totalAcquisitionOutlay() - tax - penalties,
     )
     const rothEffectFinal = rothEarlyEffect(withdrawalPlan.byAccountId)
     const hsaEffectFinal = hsaEffect(withdrawalPlan.byAccountId)
@@ -8362,8 +8489,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     // and the gain-harvesting headroom below, so the AGI cascade is consistent.
     // IRA pro-rata basis reduces the taxable traditional draw; non-qualified
     // HSA withdrawals add ordinary income.
-    const lossNetting = applyCapitalLossCarryforward(
-      capitalLossPool,
+    const lossNetting = applyAnnualCapitalLosses(
       Math.max(
         0,
         ordinaryBase +
@@ -8373,21 +8499,26 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           hsaEffectFinal.taxableOrdinary,
       ),
       preWithdrawalCapitalResult + withdrawalPlan.realizedGains,
-      lossOffsetLimit,
     )
-    capitalLossPool = lossNetting.remaining
+    if (characterCapitalLosses) {
+      shortTermCapitalLossPool = lossNetting.remainingShortTermLoss
+      longTermCapitalLossPool = lossNetting.remainingLongTermLoss
+    } else {
+      capitalLossPool = lossNetting.remaining
+    }
 
     // Record realized MAGI (≈ AGI) for IRMAA's 2-year lookback and ACA. Non-
     // qualified Roth earnings are ordinary income, so they lift MAGI too.
     // gainsRealized is signed (a net capital loss is negative); floor MAGI at 0.
     const ordinaryRealized = lossNetting.ordinaryAfter
+    const shortTermGainsRealized = lossNetting.shortTermCapitalGain
     const gainsRealized = lossNetting.netCapitalGain
     const realizedCapitalGainsBeforeCarryforward =
       preWithdrawalCapitalResult + withdrawalPlan.realizedGains
     const taxableSs = taxableSocialSecurity(
       pack,
       taxFilingStatusForYear,
-      ordinaryRealized + gainsRealized + incomes.qualifiedDividends,
+      ordinaryRealized + shortTermGainsRealized + gainsRealized + incomes.qualifiedDividends,
       incomes.socialSecurity,
       yearTaxExemptInterest,
       acaForeignExclusionAddback,
@@ -8397,6 +8528,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       Math.max(
         0,
         ordinaryRealized +
+          shortTermGainsRealized +
           gainsRealized +
           incomes.qualifiedDividends +
           taxableSs +
@@ -8412,7 +8544,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       year,
       filingStatus: filingStatusForYear,
       ordinaryIncome: ordinaryRealized,
+      shortTermCapitalGains: shortTermGainsRealized,
       capitalGains: gainsRealized,
+      stateCapitalGainAddback: equityYear?.stateCapitalGainAddback ?? 0,
+      amtPreferenceItems: equityYear?.amtAdjustment ?? 0,
       realizedCapitalGainsBeforeCarryforward,
       taxableInterestIncome: incomes.taxableInterest + ladderTaxableInterest,
       taxExemptInterest: yearTaxExemptInterest,
@@ -9046,7 +9181,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         ),
         committedActionProceeds: retirementActionProceeds,
         ordinaryIncomeBase: optimizerOrdinaryIncomeBase,
-        spendingNeed: expenses.total + contributions + propertyAcquisitionOutlay,
+        spendingNeed: expenses.total + contributions + totalAcquisitionOutlay(),
         exogenousCash: incomes.total - taxableYieldReinvested,
         traditionalInflow,
         otherInflow,
@@ -9405,7 +9540,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       const outOfPocketThisYear = Math.max(0, qualifiedMedicalThisYear - reimbursedFromCurrentYear)
       hsaReimbursablePool = Math.max(0, hsaReimbursablePool - drawnFromPool) + outOfPocketThisYear
     }
-    deposit(surplus)
+    deposit(surplus, inflFactor)
 
     // Commit the acquisition only after the accepted tax/withdrawal solve has
     // funded its cash side. The property, adjusted basis, and mortgage appear
@@ -9467,7 +9602,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           const line = hecmStates.get(account.id)
           const hecmPayoff = line ? Math.min(line.loanBalance, Math.max(0, proceeds)) : 0
           if (line) hecmStates.delete(account.id)
-          deposit(proceeds - hecmPayoff)
+          deposit(proceeds - hecmPayoff, inflFactor)
         }
         value = 0
       }
@@ -9508,7 +9643,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         // value, so max() also guards the flat-rate model drifting above face.
         const cashValue = insuranceCashValues.get(policy.id) ?? 0
         const payout = Math.max(policy.deathBenefit, cashValue)
-        deposit(payout)
+        deposit(payout, inflFactor)
         deathBenefitPaid += payout
         insuranceCashValues.set(policy.id, 0)
       } else {
@@ -10155,6 +10290,11 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       capitalLossUsedAgainstOrdinary: lossNetting.usedAgainstOrdinary,
       capitalLossCarryforwardRemaining: lossNetting.remaining,
       surplusInvested: surplus,
+      equityAcquisitionOutlay,
+      equitySaleProceeds: equityYear?.cashProceeds ?? 0,
+      equityTransactions: equityYear?.activities ?? [],
+      equityHoldings,
+      equityFederalExcludedGain: equityYear?.federalExcludedGain ?? 0,
       propertyAcquisitionOutlay,
       propertyAcquisitions,
       propertyMortgageBalances: propertyMortgageBalanceRecord,
@@ -10216,6 +10356,14 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       capitalLossPool: annualPassValueBinding(
         () => capitalLossPool,
         (value) => { capitalLossPool = value },
+      ),
+      shortTermCapitalLossPool: annualPassValueBinding(
+        () => shortTermCapitalLossPool,
+        (value) => { shortTermCapitalLossPool = value },
+      ),
+      longTermCapitalLossPool: annualPassValueBinding(
+        () => longTermCapitalLossPool,
+        (value) => { longTermCapitalLossPool = value },
       ),
       hsaReimbursablePool: annualPassValueBinding(
         () => hsaReimbursablePool,

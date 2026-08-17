@@ -236,6 +236,8 @@ interface Scalars {
   unassignedCash: number
   priorReturn: number
   capitalLoss: number
+  shortTermCapitalLoss: number
+  longTermCapitalLoss: number
   hsaPool: number
   depletionYear: number | null
   conversionNontaxable: number
@@ -264,7 +266,8 @@ function expenses(): YearExpenses {
 
 function state(): { bindings: SimulatorAnnualPassStateBindings; scalars: Scalars } {
   const scalars: Scalars = {
-    next: 1, unassignedCash: 2, priorReturn: 3, capitalLoss: 4, hsaPool: 5,
+    next: 1, unassignedCash: 2, priorReturn: 3, capitalLoss: 4,
+    shortTermCapitalLoss: 4.1, longTermCapitalLoss: 4.2, hsaPool: 5,
     depletionYear: null, conversionNontaxable: 6, healthcare: 7,
     qualifiedMedical: 8, hsaCap: 9, requiredSpending: 10, targetSpending: 11,
   }
@@ -292,6 +295,8 @@ function state(): { bindings: SimulatorAnnualPassStateBindings; scalars: Scalars
       unassignedCash: binding(scalars, 'unassignedCash'),
       priorYearPortfolioReturnPct: binding(scalars, 'priorReturn'),
       capitalLossPool: binding(scalars, 'capitalLoss'),
+      shortTermCapitalLossPool: binding(scalars, 'shortTermCapitalLoss'),
+      longTermCapitalLossPool: binding(scalars, 'longTermCapitalLoss'),
       hsaReimbursablePool: binding(scalars, 'hsaPool'),
       depletionYear: binding(scalars, 'depletionYear'),
       conversionNontaxable: binding(scalars, 'conversionNontaxable'),
@@ -357,7 +362,8 @@ function stateBytes(value: SimulatorAnnualPassStateBindings): string {
     qcdOffsetUnprovable: [...value.namedQcdOffsetHistoryUnprovable],
     warnings: [...value.warnings],
     scalars: [value.unassignedCash.read(), value.priorYearPortfolioReturnPct.read(),
-      value.capitalLossPool.read(), value.hsaReimbursablePool.read(),
+      value.capitalLossPool.read(), value.shortTermCapitalLossPool.read(),
+      value.longTermCapitalLossPool.read(), value.hsaReimbursablePool.read(),
       value.depletionYear.read(), value.conversionNontaxable.read(),
       value.healthcare.read(), value.qualifiedMedicalThisYear.read(),
       value.hsaQualifiedCap.read(), value.requiredSpendingBase.read(),
@@ -405,7 +411,8 @@ function mutateAll(value: SimulatorAnnualPassStateBindings): void {
   value.warnings.add('x')
   for (const scalar of [
     value.unassignedCash, value.priorYearPortfolioReturnPct,
-    value.capitalLossPool, value.hsaReimbursablePool,
+    value.capitalLossPool, value.shortTermCapitalLossPool,
+    value.longTermCapitalLossPool, value.hsaReimbursablePool,
     value.conversionNontaxable, value.healthcare,
     value.qualifiedMedicalThisYear, value.hsaQualifiedCap,
     value.requiredSpendingBase, value.targetSpendingBase,

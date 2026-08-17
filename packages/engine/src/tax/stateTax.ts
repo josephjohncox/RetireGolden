@@ -81,6 +81,7 @@ export function computeStateTaxableIncome(
   const taxStatus = taxParameterFilingStatus(input.filingStatus)
   const ordinary = Math.max(0, input.ordinaryIncome)
   const qualifiedDividends = Math.max(0, input.qualifiedDividends ?? 0)
+  const shortTermCapital = input.shortTermCapitalGains ?? 0
   // Signed: a capital-loss carryforward arrives as a negative net capital gain,
   // which reduces state taxable income (and its SS base) just like it does federally.
   const netCapital =
@@ -95,7 +96,19 @@ export function computeStateTaxableIncome(
   const usGovInterest = Math.min(ordinary, Math.max(0, input.usGovernmentInterest ?? 0))
 
   let taxable = ordinary - usGovInterest + qualifiedDividends
-  if (taxableCapitalPct > 0) taxable += netCapital * taxableCapitalPct
+  if (taxableCapitalPct > 0) {
+    // California does not conform to IRC §1202. Other state-specific QSBS
+    // conformity rules remain outside the current registry and receive no
+    // invented add-back.
+    const qsbsAddback = input.state?.toUpperCase() === 'CA'
+      ? Math.max(0, input.stateCapitalGainAddback ?? 0)
+      : 0
+    taxable += (
+      shortTermCapital +
+      netCapital +
+      qsbsAddback
+    ) * taxableCapitalPct
+  }
   if (params.taxesSocialSecurity && ss > 0) {
     if (opts.taxableSocialSecurityOverride !== undefined) {
       taxable += Math.max(0, opts.taxableSocialSecurityOverride)
@@ -104,7 +117,7 @@ export function computeStateTaxableIncome(
       taxable += taxableSocialSecurity(
         pack,
         taxStatus,
-        ordinary + qualifiedDividends + netCapital,
+        ordinary + qualifiedDividends + shortTermCapital + netCapital,
         ss,
         input.taxExemptInterest,
         input.foreignExclusionAddback,

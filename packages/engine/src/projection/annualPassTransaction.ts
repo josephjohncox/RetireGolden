@@ -92,6 +92,8 @@ export interface SimulatorAnnualPassStateBindings {
   unassignedCash: SimulatorAnnualPassValueBinding<number>
   priorYearPortfolioReturnPct: SimulatorAnnualPassValueBinding<number>
   capitalLossPool: SimulatorAnnualPassValueBinding<number>
+  shortTermCapitalLossPool: SimulatorAnnualPassValueBinding<number>
+  longTermCapitalLossPool: SimulatorAnnualPassValueBinding<number>
   hsaReimbursablePool: SimulatorAnnualPassValueBinding<number>
   depletionYear: SimulatorAnnualPassValueBinding<number | null>
   conversionNontaxable: SimulatorAnnualPassValueBinding<number>
@@ -184,6 +186,8 @@ interface AnnualPassSnapshot {
   unassignedCash: number
   priorYearPortfolioReturnPct: number
   capitalLossPool: number
+  shortTermCapitalLossPool: number
+  longTermCapitalLossPool: number
   hsaReimbursablePool: number
   depletionYear: number | null
   conversionNontaxable: number
@@ -335,6 +339,8 @@ function captureSnapshot(bindings: SimulatorAnnualPassStateBindings): AnnualPass
     unassignedCash: bindings.unassignedCash.read(),
     priorYearPortfolioReturnPct: bindings.priorYearPortfolioReturnPct.read(),
     capitalLossPool: bindings.capitalLossPool.read(),
+    shortTermCapitalLossPool: bindings.shortTermCapitalLossPool.read(),
+    longTermCapitalLossPool: bindings.longTermCapitalLossPool.read(),
     hsaReimbursablePool: bindings.hsaReimbursablePool.read(),
     depletionYear: bindings.depletionYear.read(),
     conversionNontaxable: bindings.conversionNontaxable.read(),
@@ -443,6 +449,8 @@ function restoreSnapshot(bindings: SimulatorAnnualPassStateBindings, snapshot: A
   bindings.unassignedCash.write(snapshot.unassignedCash)
   bindings.priorYearPortfolioReturnPct.write(snapshot.priorYearPortfolioReturnPct)
   bindings.capitalLossPool.write(snapshot.capitalLossPool)
+  bindings.shortTermCapitalLossPool.write(snapshot.shortTermCapitalLossPool)
+  bindings.longTermCapitalLossPool.write(snapshot.longTermCapitalLossPool)
   bindings.hsaReimbursablePool.write(snapshot.hsaReimbursablePool)
   bindings.depletionYear.write(snapshot.depletionYear)
   bindings.conversionNontaxable.write(snapshot.conversionNontaxable)
