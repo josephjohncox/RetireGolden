@@ -98,6 +98,49 @@ import { runMonteCarlo } from '@retiregolden/engine/montecarlo/run'
 import { packForYear } from '@retiregolden/engine/params'
 ```
 
+### Dated property purchases
+
+A property account can carry an optional atomic `purchase` event:
+
+```ts
+{
+  type: 'property',
+  id: 'future-home',
+  value: 1_000_000,
+  plannedSaleYear: 2045,
+  expectedNetProceeds: null,
+  propertyTaxAnnual: 12_000,
+  insuranceAnnual: 4_000,
+  purchase: {
+    year: 2030,
+    purchasePrice: 1_000_000,
+    purchasePriceBasis: 'todayDollars',
+    financing: {
+      type: 'mortgage',
+      downPaymentPct: 20,
+      interestPct: 6,
+      termYears: 30,
+    },
+  },
+}
+```
+
+Before 2030, this account contributes no property, mortgage, carrying cost,
+tax, spending, or net worth. In 2030 the engine prices the property from that
+path's inflation, funds the down payment through sale proceeds, income, and the
+normal withdrawal waterfall, establishes adjusted basis, creates the mortgage,
+and starts a full year of mortgage and carrying costs. Cash purchases use
+`financing: { type: 'cash' }`.
+
+Purchases scheduled in the same year execute as one batch. If the full batch is
+unfundable, the engine executes none of it and publishes
+`skippedInsufficientFunds` in `YearResult.propertyAcquisitions`. Purchase cash is
+a capital transaction reported in `propertyAcquisitionOutlay`; it is not added
+to `YearExpenses` or spending-success measures. A purchase event before the
+projection start fails closed: represent that property and mortgage as opening
+accounts instead. Combining an in-projection purchase with a HECM on the same
+property is not supported.
+
 A versioned JSON Schema for the `Plan` document is derived from `planSchema` and
 shipped both as a constant and as a static file, so a non-TypeScript consumer can
 learn the plan format:

@@ -829,6 +829,12 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
   // --- mutable engine state ---------------------------------------------
   const balances: BalanceState[] = []
   const propertyValues = new Map<string, number>()
+  /** Runtime adjusted basis; future purchases establish it from their path-specific price. */
+  const propertyCostBases = new Map<string, number>()
+  /** Embedded mortgages created by property purchases, keyed by property account id. */
+  const propertyMortgageBalances = new Map<string, number>()
+  /** Level annual principal-and-interest amount fixed when each mortgage is originated. */
+  const propertyMortgageAnnualPayments = new Map<string, number>()
   const debtBalances = new Map<string, number>()
   for (const account of plan.accounts) {
     if (
@@ -845,7 +851,18 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         costBasis: account.type === 'taxable' || account.type === 'equityComp' ? account.costBasis : 0,
       })
     } else if (account.type === 'property') {
-      propertyValues.set(account.id, account.value)
+      if (account.purchase !== undefined && account.purchase.year < startYear) {
+        throw new Error(
+          `Property ${account.id} has a purchase year before the projection start; remove purchase and enter its opening property value and mortgage as already-owned accounts.`,
+        )
+      }
+      // An in-horizon purchase begins as no property at all. `value` remains
+      // the opening-value input for properties without a purchase event.
+      propertyValues.set(
+        account.id,
+        account.purchase !== undefined ? 0 : account.value,
+      )
+      if (account.costBasis !== undefined) propertyCostBases.set(account.id, account.costBasis)
     } else if (account.type === 'debt') {
       debtBalances.set(account.id, account.balance)
     }
@@ -2886,7 +2903,62 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       idealAnnualNominal: idealLifestyleNominal,
       excessAnnualNominal: excessLifestyleNominal,
     })
-    let debtService = 0
+    // Candidate property purchases are priced now but committed only after the
+    // annual funding solve proves the whole same-year batch affordable. Keeping
+    // this preview pure prevents a failed attempt from creating property equity
+    // or mortgage debt before cash/down payment exists.
+    const propertyAcquisitionCandidates = plan.accounts
+      .filter(
+        (account): account is Extract<Account, { type: 'property' }> =>
+          account.type === 'property' && account.purchase?.year === year,
+      )
+      .map((account) => {
+        const purchase = account.purchase!
+        const purchasePrice =
+          purchase.purchasePriceBasis === 'todayDollars'
+            ? purchase.purchasePrice * inflFactor
+            : purchase.purchasePrice
+        const mortgagePrincipal =
+          purchase.financing.type === 'mortgage'
+            ? purchasePrice * (1 - purchase.financing.downPaymentPct / 100)
+            : 0
+        let monthlyPayment = 0
+        if (purchase.financing.type === 'mortgage' && mortgagePrincipal > 0) {
+          const months = purchase.financing.termYears * 12
+          const monthlyRate = purchase.financing.interestPct / 100 / 12
+          monthlyPayment = monthlyRate === 0
+            ? mortgagePrincipal / months
+            : mortgagePrincipal * monthlyRate * Math.pow(1 + monthlyRate, months) /
+              (Math.pow(1 + monthlyRate, months) - 1)
+        }
+        const mortgageWithInterest =
+          mortgagePrincipal *
+          (1 + (purchase.financing.type === 'mortgage' ? purchase.financing.interestPct : 0) / 100)
+        const mortgagePayment = Math.min(mortgageWithInterest, monthlyPayment * 12)
+        return {
+          account,
+          purchasePrice,
+          cashOutlay: purchasePrice - mortgagePrincipal,
+          mortgagePrincipal,
+          mortgagePayment,
+          endingMortgageBalance: Math.max(0, mortgageWithInterest - mortgagePayment),
+          costBasis: purchasePrice + (purchase.basisAdjustment ?? 0),
+        }
+      })
+    const candidateMortgageService = propertyAcquisitionCandidates.reduce(
+      (sum, candidate) => sum + candidate.mortgagePayment,
+      0,
+    )
+    const candidatePropertyCosts = propertyAcquisitionCandidates.reduce(
+      (sum, candidate) =>
+        sum +
+        ((candidate.account.propertyTaxAnnual ?? 0) +
+          (candidate.account.insuranceAnnual ?? 0)) *
+          inflFactor,
+      0,
+    )
+
+    let debtService = candidateMortgageService
     for (const account of plan.accounts) {
       if (account.type !== 'debt') continue
       let bal = debtBalances.get(account.id) ?? 0
@@ -2899,6 +2971,24 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       const payment = payoff ? bal : Math.min(bal, account.monthlyPayment * 12)
       bal -= payment
       debtBalances.set(account.id, bal)
+      debtService += payment
+    }
+    for (const account of plan.accounts) {
+      if (
+        account.type !== 'property' ||
+        account.purchase?.financing.type !== 'mortgage' ||
+        account.purchase.year >= year ||
+        account.plannedSaleYear === year
+      ) continue
+      let bal = propertyMortgageBalances.get(account.id) ?? 0
+      if (bal <= 0) continue
+      bal *= 1 + account.purchase.financing.interestPct / 100
+      const payment = Math.min(
+        bal,
+        propertyMortgageAnnualPayments.get(account.id) ?? 0,
+      )
+      bal -= payment
+      propertyMortgageBalances.set(account.id, bal)
       debtService += payment
     }
     // Healthcare: ACA-credited marketplace pre-65, Medicare + IRMAA from 65.
@@ -3252,6 +3342,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     if (anyAlive) {
       for (const account of plan.accounts) {
         if (account.type !== 'property') continue
+        const ownedOrAcquiring =
+          (propertyValues.get(account.id) ?? 0) > 0 ||
+          propertyAcquisitionCandidates.some((candidate) => candidate.account.id === account.id)
+        if (!ownedOrAcquiring) continue
         if (account.plannedSaleYear !== null && year >= account.plannedSaleYear) continue
         propertyCosts += ((account.propertyTaxAnnual ?? 0) + (account.insuranceAnnual ?? 0)) * inflFactor
       }
@@ -3446,23 +3540,25 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     }
 
     // --- fixed-asset dispositions (step 6) ----------------------------------
-    // With a cost basis on a property account, this year's planned sale is
-    // priced exactly — selling costs, §121 primary-residence exclusion, and
-    // depreciation recapture — and its gains join the year's tax base up
-    // front. Net proceeds enter the cash flow (so the sale can fund its own
+    // With an entered basis or one established by an atomic purchase, this
+    // year's planned sale is priced exactly — selling costs, §121
+    // primary-residence exclusion, and depreciation recapture — and its gains
+    // join the year's tax base up front. Net proceeds enter the cash flow (so the sale can fund its own
     // tax), and the property-events block below zeroes the value without the
     // legacy tax-free deposit. Without a cost basis the legacy
     // expectedNetProceeds path is untouched.
     let propertySaleProceedsTotal = 0
     for (const account of plan.accounts) {
-      if (account.type !== 'property' || account.plannedSaleYear !== year || account.costBasis === undefined) continue
+      if (account.type !== 'property' || account.plannedSaleYear !== year) continue
+      const costBasis = propertyCostBases.get(account.id)
+      if (costBasis === undefined) continue
       const value = propertyValues.get(account.id) ?? 0
       if (value <= 0) continue
       // Match the property-events block: the sale year's inflation growth
       // accrues before the sale.
       const sale = propertySaleTax({
         salePrice: value * (1 + inflRateAt(year)),
-        costBasis: account.costBasis,
+        costBasis,
         sellingCostPct: account.sellingCostPct,
         primaryResidence: account.primaryResidence,
         depreciationRecapture: account.depreciationRecapture,
@@ -3474,13 +3570,20 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       // A HECM on the sold home is repaid from the proceeds, non-recourse:
       // the payoff never exceeds what the sale nets, and the line closes.
       // (Loan repayment does not change the taxable gain computed above.)
+      const mortgagePayoff = propertyMortgageBalances.get(account.id) ?? 0
+      propertyMortgageBalances.delete(account.id)
+      propertyMortgageAnnualPayments.delete(account.id)
       const hecmState = hecmStates.get(account.id)
       let hecmPayoff = 0
       if (hecmState) {
-        hecmPayoff = Math.min(hecmState.loanBalance, Math.max(0, sale.netProceeds))
+        hecmPayoff = Math.min(
+          hecmState.loanBalance,
+          Math.max(0, sale.netProceeds - mortgagePayoff),
+        )
         hecmStates.delete(account.id)
       }
-      propertySaleProceedsTotal += sale.netProceeds - hecmPayoff
+      propertySaleProceedsTotal +=
+        sale.netProceeds - mortgagePayoff - hecmPayoff
     }
 
     // --- contributions & employer match --------------------
@@ -3825,6 +3928,29 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
        */
       linkedGroupRelease: Readonly<LinkedGroupRelease> = REFUSE_LINKED_GROUPS,
     ): { yearResult: YearResult; optimizerProbe: OptimizerYearProbe | null } => {
+    let propertyAcquisitionBatchExecutes = propertyAcquisitionCandidates.length > 0
+    let propertyAcquisitionOutlay = propertyAcquisitionCandidates.reduce(
+      (sum, candidate) => sum + candidate.cashOutlay,
+      0,
+    )
+    const skipPropertyAcquisitionBatch = (): void => {
+      if (!propertyAcquisitionBatchExecutes) return
+      propertyAcquisitionBatchExecutes = false
+      propertyAcquisitionOutlay = 0
+      const removedSystemCosts = candidateMortgageService + candidatePropertyCosts
+      requiredSpendingBase -= removedSystemCosts
+      targetSpendingBase -= removedSystemCosts
+      expenses.debtService -= candidateMortgageService
+      expenses.propertyCosts -= candidatePropertyCosts
+      expenses.requiredSpending -= removedSystemCosts
+      expenses.targetSpending -= removedSystemCosts
+      expenses.intendedSpending -= removedSystemCosts
+      expenses.total -= removedSystemCosts
+      warnings.add(
+        `Property purchases scheduled for ${year} were skipped because the full same-year acquisition batch could not be funded.`,
+      )
+    }
+
     /**
      * The Plan's retirement actions as *this* run of the pass sees them.
      *
@@ -6874,7 +7000,12 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       // pre-tax cash need. Surplus inflows (inflows above expenses+contributions)
       // are real available cash — they land in liquid accounts at year end — so
       // they raise the headroom rather than being clamped away.
-      const netLiquid = liquid + preConversionInflows - expenses.total - contributions
+      const netLiquid =
+        liquid +
+        preConversionInflows -
+        expenses.total -
+        contributions -
+        propertyAcquisitionOutlay
       const headroom = Math.max(0, netLiquid - floorNominal)
       const taxOf = (grossConversion: number): number => {
         const extraOrdinary = conversionTaxableAmountForGross(
@@ -7544,7 +7675,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     // iteration); netting reduces ordinary + gains before both federal and state
     // tax so the AGI cascade (taxable SS, IRMAA, ACA, state) falls out for free.
     const lossOffsetLimit = pack.federalTax.capitalLossOrdinaryOffsetLimit
-    let spendingNeedBeforeTax = Math.max(0, expenses.total + contributions - cashInflows)
+    let spendingNeedBeforeTax = Math.max(
+      0,
+      expenses.total + contributions + propertyAcquisitionOutlay - cashInflows,
+    )
     let acaEvaluationCount = 0
     const evaluateWithdrawalNeed = (need: number, forceGrossAca = false) => {
       acaEvaluationCount++
@@ -7702,6 +7836,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           expenses.total +
             (candidateHealthcare - healthcare) +
             contributions +
+            propertyAcquisitionOutlay +
             tax +
             penalties -
             cashInflows,
@@ -7814,45 +7949,72 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
 
     // A coordinated HECM draw changes withdrawals, withdrawals change ACA
     // MAGI, and the reconciled premium changes the pre-tax cash need the draw
-    // is intended to cover. Solve that small outer fixed point with the same
-    // evaluator used by the final ledger. The line itself remains untouched
-    // during probing, so failed or oscillating probes cannot create debt.
-    if (coordinatedHecmCapacity > EPSILON && spendingNeedBeforeTax > EPSILON) {
-      let candidateDraw = 0
-      let coordinatedDrawConverged = false
-      for (let drawPass = 0; drawPass < 16; drawPass++) {
-        cashInflows = baseCashInflows + candidateDraw
-        const probe = solveFundingRoot(
-          Math.max(0, expenses.total + contributions - cashInflows),
-        )
-        if (!probe.converged) break
+    // is intended to cover. Keep the solve restartable: an unaffordable
+    // acquisition batch is removed and the ordinary year must then re-price
+    // the HECM draw rather than retaining debt sized for a house not bought.
+    const solveCoordinatedHecmDraw = (): void => {
+      hecmDraw = 0
+      cashInflows = baseCashInflows
+      spendingNeedBeforeTax = Math.max(
+        0,
+        expenses.total + contributions + propertyAcquisitionOutlay - cashInflows,
+      )
+      if (coordinatedHecmCapacity > EPSILON && spendingNeedBeforeTax > EPSILON) {
+        let candidateDraw = 0
+        let coordinatedDrawConverged = false
+        for (let drawPass = 0; drawPass < 16; drawPass++) {
+          cashInflows = baseCashInflows + candidateDraw
+          const probe = solveFundingRoot(
+            Math.max(
+              0,
+              expenses.total + contributions + propertyAcquisitionOutlay - cashInflows,
+            ),
+          )
+          if (!probe.converged) break
 
-        const postCreditPreTaxNeed = Math.max(
-          0,
-          expenses.total +
-            (probe.evaluation.healthcare - healthcare) +
-            contributions -
-            baseCashInflows,
-        )
-        const nextDraw = Math.min(coordinatedHecmCapacity, postCreditPreTaxNeed)
-        if (Math.abs(nextDraw - candidateDraw) <= EPSILON) {
-          hecmDraw = nextDraw
-          coordinatedDrawConverged = true
-          break
+          const postCreditPreTaxNeed = Math.max(
+            0,
+            expenses.total +
+              (probe.evaluation.healthcare - healthcare) +
+              contributions +
+              propertyAcquisitionOutlay -
+              baseCashInflows,
+          )
+          const nextDraw = Math.min(coordinatedHecmCapacity, postCreditPreTaxNeed)
+          if (Math.abs(nextDraw - candidateDraw) <= EPSILON) {
+            hecmDraw = nextDraw
+            coordinatedDrawConverged = true
+            break
+          }
+          candidateDraw = nextDraw
         }
-        candidateDraw = nextDraw
+        if (!coordinatedDrawConverged) hecmDraw = 0
+        cashInflows = baseCashInflows + hecmDraw
+        spendingNeedBeforeTax = Math.max(
+          0,
+          expenses.total + contributions + propertyAcquisitionOutlay - cashInflows,
+        )
       }
-      if (!coordinatedDrawConverged) hecmDraw = 0
-      cashInflows = baseCashInflows + hecmDraw
-      spendingNeedBeforeTax = Math.max(0, expenses.total + contributions - cashInflows)
       // Probes are implementation detail; convergence diagnostics describe the
       // accepted final funding solve only.
       acaEvaluationCount = 0
     }
 
+    solveCoordinatedHecmDraw()
+
     // Keep the accepted withdrawal plan paired with the tax and premium result
-    // that produced it.
-    const fundingRoot = solveFundingRoot(spendingNeedBeforeTax)
+    // that produced it. A purchase batch is all-or-none: if the first solve
+    // cannot fund it, remove its cash and ownership costs and solve the same
+    // year again without mutating any property or mortgage state.
+    let fundingRoot = solveFundingRoot(spendingNeedBeforeTax)
+    if (
+      propertyAcquisitionBatchExecutes &&
+      fundingRoot.evaluation.withdrawalPlan.shortfall > EPSILON
+    ) {
+      skipPropertyAcquisitionBatch()
+      solveCoordinatedHecmDraw()
+      fundingRoot = solveFundingRoot(spendingNeedBeforeTax)
+    }
     let evaluation = fundingRoot.evaluation
     let converged = fundingRoot.converged
     let acaFixedPointFailed = false
@@ -7986,7 +8148,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       hecmDraw += hecmShortfallDraw
     }
     const shortfallAfterHecm = Math.max(0, withdrawalPlan.shortfall - hecmShortfallDraw)
-    const surplus = Math.max(0, cashInflows - expenses.total - contributions - tax - penalties)
+    const surplus = Math.max(
+      0,
+      cashInflows - expenses.total - contributions - propertyAcquisitionOutlay - tax - penalties,
+    )
     const rothEffectFinal = rothEarlyEffect(withdrawalPlan.byAccountId)
     const hsaEffectFinal = hsaEffect(withdrawalPlan.byAccountId)
     const iraCharacterFinal = needBasedOwnedIraCharacter(
@@ -8702,7 +8867,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         ),
         committedActionProceeds: retirementActionProceeds,
         ordinaryIncomeBase: optimizerOrdinaryIncomeBase,
-        spendingNeed: expenses.total + contributions,
+        spendingNeed: expenses.total + contributions + propertyAcquisitionOutlay,
         exogenousCash: incomes.total - taxableYieldReinvested,
         traditionalInflow,
         otherInflow,
@@ -9063,6 +9228,43 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     }
     deposit(surplus)
 
+    // Commit the acquisition only after the accepted tax/withdrawal solve has
+    // funded its cash side. The property, adjusted basis, and mortgage appear
+    // together at this boundary; no earlier pass can observe only one side.
+    if (propertyAcquisitionBatchExecutes) {
+      for (const candidate of propertyAcquisitionCandidates) {
+        propertyValues.set(candidate.account.id, candidate.purchasePrice)
+        propertyCostBases.set(candidate.account.id, candidate.costBasis)
+        if (candidate.endingMortgageBalance > 0) {
+          propertyMortgageBalances.set(
+            candidate.account.id,
+            candidate.endingMortgageBalance,
+          )
+          propertyMortgageAnnualPayments.set(
+            candidate.account.id,
+            candidate.mortgagePayment,
+          )
+        }
+      }
+    }
+    const propertyAcquisitions = propertyAcquisitionCandidates.map(
+      (candidate) => ({
+        propertyAccountId: candidate.account.id,
+        status: propertyAcquisitionBatchExecutes
+          ? 'executed' as const
+          : 'skippedInsufficientFunds' as const,
+        purchasePrice: candidate.purchasePrice,
+        cashOutlay: propertyAcquisitionBatchExecutes ? candidate.cashOutlay : 0,
+        mortgagePrincipal: propertyAcquisitionBatchExecutes
+          ? candidate.mortgagePrincipal
+          : 0,
+        mortgagePayment: propertyAcquisitionBatchExecutes
+          ? candidate.mortgagePayment
+          : 0,
+        costBasis: candidate.costBasis,
+      }),
+    )
+
     if (shortfallAfterHecm > EPSILON && depletionYear === null) depletionYear = year
 
     // --- property events + growth ------------------------------------------
@@ -9071,11 +9273,11 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       let value = propertyValues.get(account.id) ?? 0
       value *= 1 + inflRateAt(year)
       if (account.plannedSaleYear === year && value > 0) {
-        // Exact-taxed sales (costBasis set) already deposited their net
-        // proceeds through the year's cash flow above; the legacy tax-free
+        // Exact-taxed sales (entered or acquisition-established basis) already
+        // deposited their net proceeds through the year's cash flow above; the legacy tax-free
         // expectedNetProceeds path deposits here — net of any HECM payoff,
         // which is non-recourse (never more than the sale nets).
-        if (account.costBasis === undefined) {
+        if (!propertyCostBases.has(account.id)) {
           const proceeds = account.expectedNetProceeds ?? value
           const line = hecmStates.get(account.id)
           const hecmPayoff = line ? Math.min(line.loanBalance, Math.max(0, proceeds)) : 0
@@ -9285,6 +9487,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       balanceEntries.push([id, value])
       debtTotal += value
     }
+    const propertyMortgageBalanceRecord = Object.fromEntries(
+      propertyMortgageBalances,
+    )
+    for (const value of propertyMortgageBalances.values()) debtTotal += value
     // HECM loans net against net worth with the non-recourse floor honored:
     // the lender's claim never exceeds the home's value, so heirs are never
     // charged for a loan that outgrew the house.
@@ -9764,6 +9970,9 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       capitalLossUsedAgainstOrdinary: lossNetting.usedAgainstOrdinary,
       capitalLossCarryforwardRemaining: lossNetting.remaining,
       surplusInvested: surplus,
+      propertyAcquisitionOutlay,
+      propertyAcquisitions,
+      propertyMortgageBalances: propertyMortgageBalanceRecord,
       shortfall: shortfallAfterHecm,
       requiredShortfall,
       targetShortfall,
@@ -9797,6 +10006,9 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       rothAssumedContributionRemaining,
       rothCounterfactualFreeCoverConsumed,
       propertyValues,
+      propertyCostBases,
+      propertyMortgageBalances,
+      propertyMortgageAnnualPayments,
       hecmStates,
       insuranceCashValues,
       allocationTrack,

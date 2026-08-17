@@ -281,7 +281,9 @@ function state(): { bindings: SimulatorAnnualPassStateBindings; scalars: Scalars
       iraProRata: new Map(), iraBasisByOwner: new Map(), rothBasis: new Map(),
       rothAssumedContributionRemaining: new Map(),
       rothCounterfactualFreeCoverConsumed: new Map(),
-      propertyValues: new Map(), hecmStates: new Map(),
+      propertyValues: new Map(), propertyCostBases: new Map(),
+      propertyMortgageBalances: new Map(),
+      propertyMortgageAnnualPayments: new Map(), hecmStates: new Map(),
       insuranceCashValues: new Map(), allocationTrack: new Map(),
       seppAmortAmount: new Map(), magiHistory: new Map(),
       namedQcdOffsetConsumedByDonor: new Map(),
@@ -343,6 +345,9 @@ function stateBytes(value: SimulatorAnnualPassStateBindings): string {
     rothAssumedContributionRemaining: [...value.rothAssumedContributionRemaining],
     rothCounterfactualFreeCoverConsumed: [...value.rothCounterfactualFreeCoverConsumed],
     properties: [...value.propertyValues],
+    propertyCostBases: [...value.propertyCostBases],
+    propertyMortgageBalances: [...value.propertyMortgageBalances],
+    propertyMortgageAnnualPayments: [...value.propertyMortgageAnnualPayments],
     hecm: [...value.hecmStates], insurance: [...value.insuranceCashValues],
     allocation: [...value.allocationTrack], sepp: [...value.seppAmortAmount],
     magi: [...value.magiHistory],
@@ -382,6 +387,9 @@ function mutateAll(value: SimulatorAnnualPassStateBindings): void {
   value.rothAssumedContributionRemaining.set('x', 1)
   value.rothCounterfactualFreeCoverConsumed.set('x', 1)
   value.propertyValues.set('x', 1)
+  value.propertyCostBases.set('x', 1)
+  value.propertyMortgageBalances.set('x', 1)
+  value.propertyMortgageAnnualPayments.set('x', 1)
   value.hecmStates.set('x', { principalLimit: 1, loanBalance: 1 })
   value.insuranceCashValues.set('x', 1)
   value.allocationTrack.set('x', {

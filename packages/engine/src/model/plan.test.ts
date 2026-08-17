@@ -473,6 +473,42 @@ describe('parsePlan', () => {
     expect(parsePlan(plan).ok).toBe(true)
   })
 
+  it('validates an atomic property purchase lifecycle', () => {
+    const plan = validCouplePlan()
+    plan.accounts.push({
+      type: 'property',
+      id: 'future-home',
+      name: 'Future home',
+      ownerPersonId: null,
+      annualReturnPct: null,
+      value: 750_000,
+      plannedSaleYear: 2040,
+      expectedNetProceeds: null,
+      depreciationRecapture: 10_000,
+      purchase: {
+        year: 2030,
+        purchasePrice: 750_000,
+        purchasePriceBasis: 'todayDollars',
+        basisAdjustment: 25_000,
+        financing: {
+          type: 'mortgage',
+          downPaymentPct: 20,
+          interestPct: 6,
+          termYears: 30,
+        },
+      },
+    } as Plan['accounts'][number])
+    expect(parsePlan(plan).ok).toBe(true)
+
+    const property = plan.accounts[plan.accounts.length - 1]
+    if (property?.type !== 'property') throw new Error('expected property')
+    property.plannedSaleYear = 2030
+    expect(parsePlan(plan).ok).toBe(false)
+    property.plannedSaleYear = 2040
+    property.costBasis = 700_000
+    expect(parsePlan(plan).ok).toBe(false)
+  })
+
   it('accepts an optional taxable safety-net floor', () => {
     const plan = validCouplePlan()
     plan.strategies.taxableSafetyNetFloor = 25_000

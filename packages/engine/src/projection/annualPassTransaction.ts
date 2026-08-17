@@ -69,6 +69,9 @@ export interface SimulatorAnnualPassStateBindings {
    */
   rothCounterfactualFreeCoverConsumed: Map<string, number>
   propertyValues: Map<string, number>
+  propertyCostBases: Map<string, number>
+  propertyMortgageBalances: Map<string, number>
+  propertyMortgageAnnualPayments: Map<string, number>
   hecmStates: Map<string, SimulatorAnnualPassHecmState>
   insuranceCashValues: Map<string, number>
   allocationTrack: Map<string, SimulatorAnnualPassAllocationTrackState>
@@ -165,6 +168,9 @@ interface AnnualPassSnapshot {
   rothAssumedContributionRemaining: Array<[string, number]>
   rothCounterfactualFreeCoverConsumed: Array<[string, number]>
   propertyValues: Array<[string, number]>
+  propertyCostBases: Array<[string, number]>
+  propertyMortgageBalances: Array<[string, number]>
+  propertyMortgageAnnualPayments: Array<[string, number]>
   hecmStates: Array<[string, SimulatorAnnualPassHecmState]>
   insuranceCashValues: Array<[string, number]>
   allocationTrack: Array<[string, SimulatorAnnualPassAllocationTrackState]>
@@ -300,6 +306,15 @@ function captureSnapshot(bindings: SimulatorAnnualPassStateBindings): AnnualPass
       (value) => value,
     ),
     propertyValues: snapshotMap(bindings.propertyValues, (value) => value),
+    propertyCostBases: snapshotMap(bindings.propertyCostBases, (value) => value),
+    propertyMortgageBalances: snapshotMap(
+      bindings.propertyMortgageBalances,
+      (value) => value,
+    ),
+    propertyMortgageAnnualPayments: snapshotMap(
+      bindings.propertyMortgageAnnualPayments,
+      (value) => value,
+    ),
     hecmStates: snapshotMap(bindings.hecmStates, cloneHecmState),
     insuranceCashValues: snapshotMap(bindings.insuranceCashValues, (value) => value),
     allocationTrack: snapshotMap(bindings.allocationTrack, cloneAllocationTrackState),
@@ -385,6 +400,17 @@ function restoreSnapshot(bindings: SimulatorAnnualPassStateBindings, snapshot: A
     (value) => value,
   )
   restoreMap(bindings.propertyValues, snapshot.propertyValues, (value) => value)
+  restoreMap(bindings.propertyCostBases, snapshot.propertyCostBases, (value) => value)
+  restoreMap(
+    bindings.propertyMortgageBalances,
+    snapshot.propertyMortgageBalances,
+    (value) => value,
+  )
+  restoreMap(
+    bindings.propertyMortgageAnnualPayments,
+    snapshot.propertyMortgageAnnualPayments,
+    (value) => value,
+  )
   restoreMap(bindings.hecmStates, snapshot.hecmStates, cloneHecmState)
   restoreMap(bindings.insuranceCashValues, snapshot.insuranceCashValues, (value) => value)
   restoreMap(bindings.allocationTrack, snapshot.allocationTrack, cloneAllocationTrackState)

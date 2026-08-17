@@ -1150,21 +1150,62 @@ export const hecmLineOfCreditSchema = z.object({
 })
 export type HecmLineOfCredit = z.infer<typeof hecmLineOfCreditSchema>
 
+export const propertyPurchaseFinancingSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('cash') }),
+  z.object({
+    type: z.literal('mortgage'),
+    /** Percent of the path-specific purchase price paid through the normal withdrawal waterfall. */
+    downPaymentPct: z.number().min(0).max(100),
+    /** Nominal annual mortgage rate. */
+    interestPct: pct,
+    /** Amortization term used to derive the level monthly principal-and-interest payment. */
+    termYears: z.number().int().min(1).max(50),
+  }),
+])
+
+/**
+ * Atomic in-projection property purchase. Before `year`, the property and its
+ * embedded mortgage do not exist and have no balance-sheet, spending, tax, or
+ * guardrail effect. The annual model treats the purchase as occurring at the
+ * start of `year`: the property receives that year's appreciation and a
+ * mortgage receives a full year of service.
+ *
+ * All purchases scheduled in one year are funded as one batch through that
+ * year's sale proceeds, income, and normal withdrawal waterfall. If the batch
+ * cannot be funded in full, none of it executes; YearResult publishes the
+ * skipped attempts instead of inventing bridge debt or free property equity.
+ */
+export const propertyPurchaseSchema = z.object({
+  year: calendarYear,
+  purchasePrice: nonNegative,
+  /** Today's dollars follow the simulation inflation path; purchase-year nominal dollars are fixed. */
+  purchasePriceBasis: z.enum(['todayDollars', 'purchaseYearNominal']),
+  /** Capitalized purchase costs or improvements added to basis at acquisition. */
+  basisAdjustment: nonNegative.optional(),
+  financing: propertyPurchaseFinancingSchema,
+})
+export type PropertyPurchase = z.infer<typeof propertyPurchaseSchema>
+
 export const propertySchema = z.object({
   ...accountBase,
   type: z.literal('property'),
+  /** Opening value for an already-owned property; ignored before an in-horizon purchase. */
   value: nonNegative,
+  /** Optional atomic future acquisition. Absent means the property is already owned. */
+  purchase: propertyPurchaseSchema.optional(),
   plannedSaleYear: calendarYear.nullable(),
   /**
    * Net proceeds entering taxable savings in the sale year (user-estimated,
-   * treated as tax-free). Legacy path — ignored when `costBasis` is set, which
-   * switches the sale to exact basis/exclusion/recapture tax treatment.
+   * treated as tax-free). Legacy path — ignored when `costBasis` is set or an
+   * atomic purchase establishes runtime basis; either switches the sale to
+   * exact basis/exclusion/recapture tax treatment.
    */
   expectedNetProceeds: nonNegative.nullable(),
   /**
-   * Adjusted cost basis (purchase price + improvements, historical dollars —
-   * deliberately not inflation-indexed). Setting it turns on exact disposition
-   * tax treatment: gain = sale price − selling costs − basis, reduced by the
+   * Adjusted cost basis for an already-owned property (purchase price +
+   * improvements, historical dollars — deliberately not inflation-indexed).
+   * An atomic purchase establishes its own runtime basis instead. Either turns
+   * on exact disposition tax treatment: gain = sale price − selling costs − basis, reduced by the
    * §121 exclusion for a primary residence, with any depreciation recapture
    * taxed as ordinary income and the remainder as capital gain.
    */
@@ -1193,6 +1234,32 @@ export const propertySchema = z.object({
   insuranceAnnual: nonNegative.optional(),
   /** Opt-in HECM reverse-mortgage line of credit on this home. Requires `primaryResidence`. */
   hecm: hecmLineOfCreditSchema.optional(),
+}).superRefine((property, ctx) => {
+  if (
+    property.purchase !== undefined &&
+    property.plannedSaleYear !== null &&
+    property.plannedSaleYear <= property.purchase.year
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['plannedSaleYear'],
+      message: 'A planned property sale must be after the property purchase year.',
+    })
+  }
+  if (property.purchase !== undefined && property.costBasis !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['costBasis'],
+      message: 'A purchased property derives basis from its path-specific purchase price plus basisAdjustment.',
+    })
+  }
+  if (property.purchase !== undefined && property.hecm !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['hecm'],
+      message: 'Opening a HECM on a property in the same modeled lifecycle as its purchase is not yet supported.',
+    })
+  }
 })
 
 export const debtSchema = z.object({
@@ -2675,7 +2742,12 @@ export const planSchema = z
           message: "reimburse-later accumulation requires the 'capByMedicalExpenses' withdrawal treatment",
         })
       }
-      if (a.type === 'property' && a.depreciationRecapture !== undefined && a.costBasis === undefined) {
+      if (
+        a.type === 'property' &&
+        a.depreciationRecapture !== undefined &&
+        a.costBasis === undefined &&
+        a.purchase === undefined
+      ) {
         ctx.addIssue({
           code: 'custom',
           path: ['accounts', i, 'depreciationRecapture'],

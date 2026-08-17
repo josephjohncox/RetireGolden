@@ -469,7 +469,11 @@ export interface OptimizerYearProbe {
    * nonnegative clamp then deleted.
    */
   ordinaryIncomeBase: number
-  /** Total cash uses besides tax/penalties this year (expenses + contributions). */
+  /**
+   * Total cash uses besides tax/penalties this year: expenses, contributions,
+   * and any executed property-acquisition cash/down payments. Property purchases
+   * remain capital transactions and are not added to YearExpenses.
+   */
   spendingNeed: number
   /** Non-account cash inflows this year (income streams: SS, pensions, etc.). */
   exogenousCash: number
@@ -1357,6 +1361,21 @@ export interface SocialSecurityStreamActivity {
   isSpousalSurvivorGateStream: boolean
 }
 
+export interface PropertyAcquisitionActivity {
+  propertyAccountId: string
+  status: 'executed' | 'skippedInsufficientFunds'
+  /** Path-specific nominal purchase price for this simulation year. */
+  purchasePrice: number
+  /** Cash/down payment actually funded through the annual withdrawal waterfall. */
+  cashOutlay: number
+  /** Mortgage principal created atomically with the property. */
+  mortgagePrincipal: number
+  /** Principal-and-interest service charged in the acquisition year. */
+  mortgagePayment: number
+  /** Adjusted tax basis established at acquisition. */
+  costBasis: number
+}
+
 export interface YearResult {
   year: number
   /**
@@ -1731,6 +1750,15 @@ export interface YearResult {
   capitalLossCarryforwardRemaining: number
   /** Surplus cashflow invested (into cash, else taxable, else unassigned). */
   surplusInvested: number
+  /**
+   * Cash/down payments funded for property purchases this year. A capital
+   * transaction, not spending: excluded from YearExpenses and spending success.
+   */
+  propertyAcquisitionOutlay?: number
+  /** Atomic property purchase attempts scheduled for this year. */
+  propertyAcquisitions?: readonly Readonly<PropertyAcquisitionActivity>[]
+  /** Remaining embedded mortgage principal by property account id. */
+  propertyMortgageBalances?: Readonly<Record<string, number>>
   /** Spending the portfolio could not cover this year. */
   shortfall: number
   /**

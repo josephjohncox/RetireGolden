@@ -155,6 +155,18 @@ function fixture(): {
       ['home', 500_000],
       ['deleted-property', 50_000],
     ]),
+    propertyCostBases: new Map([
+      ['home', 300_000],
+      ['deleted-property', 30_000],
+    ]),
+    propertyMortgageBalances: new Map([
+      ['home', 150_000],
+      ['deleted-property', 15_000],
+    ]),
+    propertyMortgageAnnualPayments: new Map([
+      ['home', 12_000],
+      ['deleted-property', 1_200],
+    ]),
     hecmStates: new Map([
       ['home', { principalLimit: 200_000, loanBalance: 25_000 }],
       ['deleted-property', { principalLimit: 10_000, loanBalance: 1_000 }],
@@ -233,6 +245,9 @@ function stateBytes(bindings: SimulatorAnnualPassStateBindings): string {
     rothAssumedContributionRemaining: [...bindings.rothAssumedContributionRemaining],
     rothCounterfactualFreeCoverConsumed: [...bindings.rothCounterfactualFreeCoverConsumed],
     propertyValues: [...bindings.propertyValues],
+    propertyCostBases: [...bindings.propertyCostBases],
+    propertyMortgageBalances: [...bindings.propertyMortgageBalances],
+    propertyMortgageAnnualPayments: [...bindings.propertyMortgageAnnualPayments],
     hecmStates: [...bindings.hecmStates],
     insuranceCashValues: [...bindings.insuranceCashValues],
     allocationTrack: [...bindings.allocationTrack],
@@ -344,6 +359,15 @@ function mutateEntireAnnualPass(bindings: SimulatorAnnualPassStateBindings): voi
   bindings.propertyValues.set('home', 601)
   bindings.propertyValues.delete('deleted-property')
   bindings.propertyValues.set('added-property', 602)
+  bindings.propertyCostBases.set('home', 603)
+  bindings.propertyCostBases.delete('deleted-property')
+  bindings.propertyCostBases.set('added-property', 604)
+  bindings.propertyMortgageBalances.set('home', 605)
+  bindings.propertyMortgageBalances.delete('deleted-property')
+  bindings.propertyMortgageBalances.set('added-property', 606)
+  bindings.propertyMortgageAnnualPayments.set('home', 607)
+  bindings.propertyMortgageAnnualPayments.delete('deleted-property')
+  bindings.propertyMortgageAnnualPayments.set('added-property', 608)
   const hecm = bindings.hecmStates.get('home')!
   hecm.principalLimit = 603
   hecm.loanBalance = 604
