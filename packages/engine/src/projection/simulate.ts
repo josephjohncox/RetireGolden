@@ -93,6 +93,7 @@ import {
 } from '../strategies/accountEligibility.js'
 import { openIraProRataYear, splitIraDistribution, type IraProRataYear } from '../strategies/iraBasis.js'
 import { propertySaleTax } from '../tax/propertySale.js'
+import { annualPropertyCosts } from './propertyCosts.js'
 import {
   aggregateBasisSale,
   type AggregateBasisSaleResult,
@@ -831,6 +832,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
   const propertyValues = new Map<string, number>()
   /** Runtime adjusted basis; future purchases establish it from their path-specific price. */
   const propertyCostBases = new Map<string, number>()
+  /** Prop 13 factored base-year values, distinct from temporary taxable assessments. */
+  const propertyFactoredBaseValues = new Map<string, number>()
   /** Embedded mortgages created by property purchases, keyed by property account id. */
   const propertyMortgageBalances = new Map<string, number>()
   /** Level annual principal-and-interest amount fixed when each mortgage is originated. */
@@ -863,6 +866,16 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         account.purchase !== undefined ? 0 : account.value,
       )
       if (account.costBasis !== undefined) propertyCostBases.set(account.id, account.costBasis)
+      if (
+        account.propertyTax?.mode === 'prop13' &&
+        account.purchase === undefined &&
+        account.propertyTax.factoredBaseYearValue !== undefined
+      ) {
+        propertyFactoredBaseValues.set(
+          account.id,
+          account.propertyTax.factoredBaseYearValue,
+        )
+      }
     } else if (account.type === 'debt') {
       debtBalances.set(account.id, account.balance)
     }
@@ -2903,6 +2916,29 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       idealAnnualNominal: idealLifestyleNominal,
       excessAnnualNominal: excessLifestyleNominal,
     })
+    // Advance each already-owned Prop 13 factored base once per tax year. The
+    // taxable assessment may be lower when market value falls, but the factored
+    // base itself remains on its capped statutory track for later recovery.
+    if (year > startYear) {
+      for (const account of plan.accounts) {
+        if (account.type !== 'property' || account.propertyTax?.mode !== 'prop13') continue
+        if ((propertyValues.get(account.id) ?? 0) <= 0) continue
+        const prior = propertyFactoredBaseValues.get(account.id)
+        if (prior === undefined) continue
+        const growthPct = Math.max(
+          0,
+          Math.min(
+            inflRateAt(year) * 100,
+            account.propertyTax.annualInflationCapPct,
+          ),
+        )
+        propertyFactoredBaseValues.set(
+          account.id,
+          prior * (1 + growthPct / 100),
+        )
+      }
+    }
+
     // Candidate property purchases are priced now but committed only after the
     // annual funding solve proves the whole same-year batch affordable. Keeping
     // this preview pure prevents a failed attempt from creating property equity
@@ -2943,6 +2979,14 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           mortgagePayment,
           endingMortgageBalance: Math.max(0, mortgageWithInterest - mortgagePayment),
           costBasis: purchasePrice + (purchase.basisAdjustment ?? 0),
+          propertyCosts: annualPropertyCosts({
+            account,
+            marketValue: purchasePrice,
+            inflationScale: inflFactor,
+            ...(account.propertyTax?.mode === 'prop13'
+              ? { factoredBaseYearValue: purchasePrice }
+              : {}),
+          }),
         }
       })
     const candidateMortgageService = propertyAcquisitionCandidates.reduce(
@@ -2950,11 +2994,19 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       0,
     )
     const candidatePropertyCosts = propertyAcquisitionCandidates.reduce(
-      (sum, candidate) =>
-        sum +
-        ((candidate.account.propertyTaxAnnual ?? 0) +
-          (candidate.account.insuranceAnnual ?? 0)) *
-          inflFactor,
+      (sum, candidate) => sum + candidate.propertyCosts.total,
+      0,
+    )
+    const candidatePropertyTax = propertyAcquisitionCandidates.reduce(
+      (sum, candidate) => sum + candidate.propertyCosts.propertyTax,
+      0,
+    )
+    const candidatePropertyInsurance = propertyAcquisitionCandidates.reduce(
+      (sum, candidate) => sum + candidate.propertyCosts.insurance,
+      0,
+    )
+    const candidatePropertyMaintenance = propertyAcquisitionCandidates.reduce(
+      (sum, candidate) => sum + candidate.propertyCosts.maintenance,
       0,
     )
 
@@ -2983,12 +3035,22 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       let bal = propertyMortgageBalances.get(account.id) ?? 0
       if (bal <= 0) continue
       bal *= 1 + account.purchase.financing.interestPct / 100
-      const payment = Math.min(
-        bal,
-        propertyMortgageAnnualPayments.get(account.id) ?? 0,
-      )
+      const payoff =
+        account.purchase.financing.payoffYear != null &&
+        year >= account.purchase.financing.payoffYear
+      const payment = payoff
+        ? bal
+        : Math.min(
+            bal,
+            propertyMortgageAnnualPayments.get(account.id) ?? 0,
+          )
       bal -= payment
-      propertyMortgageBalances.set(account.id, bal)
+      if (bal <= EPSILON) {
+        propertyMortgageBalances.delete(account.id)
+        propertyMortgageAnnualPayments.delete(account.id)
+      } else {
+        propertyMortgageBalances.set(account.id, bal)
+      }
       debtService += payment
     }
     // Healthcare: ACA-credited marketplace pre-65, Medicare + IRMAA from 65.
@@ -3338,18 +3400,37 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     // owned, continuing after any mortgage is paid off — the part of a PITI
     // payment the debt account deliberately excludes. Today's dollars, inflated;
     // skipped from the sale year on, and (like base spending) once nobody is alive.
-    let propertyCosts = 0
+    let propertyTax = 0
+    let propertyInsurance = 0
+    let propertyMaintenance = 0
     if (anyAlive) {
       for (const account of plan.accounts) {
         if (account.type !== 'property') continue
-        const ownedOrAcquiring =
-          (propertyValues.get(account.id) ?? 0) > 0 ||
-          propertyAcquisitionCandidates.some((candidate) => candidate.account.id === account.id)
-        if (!ownedOrAcquiring) continue
         if (account.plannedSaleYear !== null && year >= account.plannedSaleYear) continue
-        propertyCosts += ((account.propertyTaxAnnual ?? 0) + (account.insuranceAnnual ?? 0)) * inflFactor
+        const candidate = propertyAcquisitionCandidates.find(
+          (entry) => entry.account.id === account.id,
+        )
+        const marketValue = candidate?.purchasePrice ??
+          (propertyValues.get(account.id) ?? 0)
+        if (marketValue <= 0) continue
+        const costs = candidate?.propertyCosts ?? annualPropertyCosts({
+          account,
+          marketValue,
+          inflationScale: inflFactor,
+          ...(account.propertyTax?.mode === 'prop13'
+            ? {
+                factoredBaseYearValue:
+                  propertyFactoredBaseValues.get(account.id) ?? marketValue,
+              }
+            : {}),
+        })
+        propertyTax += costs.propertyTax
+        propertyInsurance += costs.insurance
+        propertyMaintenance += costs.maintenance
       }
     }
+    const propertyCosts =
+      propertyTax + propertyInsurance + propertyMaintenance
 
     // System-computed costs are required by default: a plan must never report
     // "floor success" after silently cutting healthcare, housing, debt, or care.
@@ -3518,6 +3599,9 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       oneTimeGoals: oneTimeGoalsFunded,
       debtService,
       propertyCosts,
+      propertyTax,
+      propertyInsurance,
+      propertyMaintenance,
       healthcare,
       insurancePremiums,
       careCost,
@@ -3573,6 +3657,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       const mortgagePayoff = propertyMortgageBalances.get(account.id) ?? 0
       propertyMortgageBalances.delete(account.id)
       propertyMortgageAnnualPayments.delete(account.id)
+      propertyFactoredBaseValues.delete(account.id)
       const hecmState = hecmStates.get(account.id)
       let hecmPayoff = 0
       if (hecmState) {
@@ -3942,6 +4027,18 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       targetSpendingBase -= removedSystemCosts
       expenses.debtService -= candidateMortgageService
       expenses.propertyCosts -= candidatePropertyCosts
+      expenses.propertyTax =
+        Math.max(0, (expenses.propertyTax ?? 0) - candidatePropertyTax)
+      expenses.propertyInsurance =
+        Math.max(
+          0,
+          (expenses.propertyInsurance ?? 0) - candidatePropertyInsurance,
+        )
+      expenses.propertyMaintenance =
+        Math.max(
+          0,
+          (expenses.propertyMaintenance ?? 0) - candidatePropertyMaintenance,
+        )
       expenses.requiredSpending -= removedSystemCosts
       expenses.targetSpending -= removedSystemCosts
       expenses.intendedSpending -= removedSystemCosts
@@ -9235,6 +9332,12 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       for (const candidate of propertyAcquisitionCandidates) {
         propertyValues.set(candidate.account.id, candidate.purchasePrice)
         propertyCostBases.set(candidate.account.id, candidate.costBasis)
+        if (candidate.account.propertyTax?.mode === 'prop13') {
+          propertyFactoredBaseValues.set(
+            candidate.account.id,
+            candidate.purchasePrice,
+          )
+        }
         if (candidate.endingMortgageBalance > 0) {
           propertyMortgageBalances.set(
             candidate.account.id,
@@ -10007,6 +10110,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       rothCounterfactualFreeCoverConsumed,
       propertyValues,
       propertyCostBases,
+      propertyFactoredBaseValues,
       propertyMortgageBalances,
       propertyMortgageAnnualPayments,
       hecmStates,

@@ -614,8 +614,14 @@ export interface YearExpenses {
   oneTimeGoals: number
   /** Debt principal & interest (incl. any scheduled lump-sum payoff this year). */
   debtService: number
-  /** Property tax + homeowner's insurance on owned properties (continues after mortgage payoff). */
+  /** Property tax + homeowner's insurance + maintenance while owned. */
   propertyCosts: number
+  /** Property-tax share of propertyCosts; published by simulatePlan. */
+  propertyTax?: number
+  /** Homeowner's/hazard-insurance share of propertyCosts; published by simulatePlan. */
+  propertyInsurance?: number
+  /** Maintenance share of propertyCosts; published by simulatePlan. */
+  propertyMaintenance?: number
   /** Pre-65 marketplace premiums net of ACA credit + Medicare (Part B incl. IRMAA, Part D surcharge, extras). */
   healthcare: number
   /** Level (fixed-nominal) insurance premiums charged this year (LTC + permanent life). */

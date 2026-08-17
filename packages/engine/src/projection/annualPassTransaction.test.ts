@@ -159,6 +159,10 @@ function fixture(): {
       ['home', 300_000],
       ['deleted-property', 30_000],
     ]),
+    propertyFactoredBaseValues: new Map([
+      ['home', 280_000],
+      ['deleted-property', 28_000],
+    ]),
     propertyMortgageBalances: new Map([
       ['home', 150_000],
       ['deleted-property', 15_000],
@@ -246,6 +250,7 @@ function stateBytes(bindings: SimulatorAnnualPassStateBindings): string {
     rothCounterfactualFreeCoverConsumed: [...bindings.rothCounterfactualFreeCoverConsumed],
     propertyValues: [...bindings.propertyValues],
     propertyCostBases: [...bindings.propertyCostBases],
+    propertyFactoredBaseValues: [...bindings.propertyFactoredBaseValues],
     propertyMortgageBalances: [...bindings.propertyMortgageBalances],
     propertyMortgageAnnualPayments: [...bindings.propertyMortgageAnnualPayments],
     hecmStates: [...bindings.hecmStates],
@@ -362,6 +367,9 @@ function mutateEntireAnnualPass(bindings: SimulatorAnnualPassStateBindings): voi
   bindings.propertyCostBases.set('home', 603)
   bindings.propertyCostBases.delete('deleted-property')
   bindings.propertyCostBases.set('added-property', 604)
+  bindings.propertyFactoredBaseValues.set('home', 604.5)
+  bindings.propertyFactoredBaseValues.delete('deleted-property')
+  bindings.propertyFactoredBaseValues.set('added-property', 604.75)
   bindings.propertyMortgageBalances.set('home', 605)
   bindings.propertyMortgageBalances.delete('deleted-property')
   bindings.propertyMortgageBalances.set('added-property', 606)

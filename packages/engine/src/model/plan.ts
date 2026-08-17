@@ -1160,6 +1160,8 @@ export const propertyPurchaseFinancingSchema = z.discriminatedUnion('type', [
     interestPct: pct,
     /** Amortization term used to derive the level monthly principal-and-interest payment. */
     termYears: z.number().int().min(1).max(50),
+    /** Optional future year to pay the remaining mortgage balance through the withdrawal waterfall. */
+    payoffYear: calendarYear.nullable().optional(),
   }),
 ])
 
@@ -1185,6 +1187,46 @@ export const propertyPurchaseSchema = z.object({
   financing: propertyPurchaseFinancingSchema,
 })
 export type PropertyPurchase = z.infer<typeof propertyPurchaseSchema>
+
+export const propertyRecurringCostSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('fixedAnnual'),
+    /** Annual cost in projection-start dollars; follows the general inflation path. */
+    annualAmount: nonNegative,
+  }),
+  z.object({
+    mode: z.literal('propertyValuePct'),
+    /** Annual percentage of the property's opening market value. */
+    annualPct: z.number().min(0).max(100),
+  }),
+])
+export type PropertyRecurringCost = z.infer<typeof propertyRecurringCostSchema>
+
+export const propertyTaxCostSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('fixedAnnual'),
+    /** Annual property tax in projection-start dollars; follows general inflation. */
+    annualAmount: nonNegative,
+  }),
+  z.object({
+    mode: z.literal('marketValuePct'),
+    /** Effective annual tax rate applied to opening market value. */
+    annualPct: z.number().min(0).max(100),
+  }),
+  z.object({
+    mode: z.literal('prop13'),
+    /**
+     * Current factored base-year value for an already-owned property. A future
+     * purchase establishes this from its path-specific purchase price instead.
+     */
+    factoredBaseYearValue: nonNegative.optional(),
+    /** Annual positive inflation increase cap (normally 2 for California Proposition 13). */
+    annualInflationCapPct: z.number().min(0).max(100),
+    /** Effective tax rate, including the base levy and any user-modeled local bonded debt. */
+    taxRatePct: z.number().min(0).max(100),
+  }),
+])
+export type PropertyTaxCost = z.infer<typeof propertyTaxCostSchema>
 
 export const propertySchema = z.object({
   ...accountBase,
@@ -1230,8 +1272,14 @@ export const propertySchema = z.object({
    * carrying costs a PITI payment hides. Optional (treated as 0). @see insuranceAnnual
    */
   propertyTaxAnnual: nonNegative.optional(),
+  /** First-class property-tax policy. Do not combine with legacy propertyTaxAnnual. */
+  propertyTax: propertyTaxCostSchema.optional(),
   /** Annual homeowner's/hazard insurance (today's dollars), charged while owned. Optional (treated as 0). */
   insuranceAnnual: nonNegative.optional(),
+  /** First-class insurance policy. Do not combine with legacy insuranceAnnual. */
+  insurance: propertyRecurringCostSchema.optional(),
+  /** Ongoing maintenance while owned. */
+  maintenance: propertyRecurringCostSchema.optional(),
   /** Opt-in HECM reverse-mortgage line of credit on this home. Requires `primaryResidence`. */
   hecm: hecmLineOfCreditSchema.optional(),
 }).superRefine((property, ctx) => {
@@ -1258,6 +1306,53 @@ export const propertySchema = z.object({
       code: 'custom',
       path: ['hecm'],
       message: 'Opening a HECM on a property in the same modeled lifecycle as its purchase is not yet supported.',
+    })
+  }
+  if (
+    property.purchase?.financing.type === 'mortgage' &&
+    property.purchase.financing.payoffYear != null &&
+    property.purchase.financing.payoffYear <= property.purchase.year
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['purchase', 'financing', 'payoffYear'],
+      message: 'A mortgage payoff year must be after the property purchase year.',
+    })
+  }
+  if (property.propertyTaxAnnual !== undefined && property.propertyTax !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['propertyTax'],
+      message: 'Use either legacy propertyTaxAnnual or propertyTax, not both.',
+    })
+  }
+  if (property.insuranceAnnual !== undefined && property.insurance !== undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['insurance'],
+      message: 'Use either legacy insuranceAnnual or insurance, not both.',
+    })
+  }
+  if (
+    property.propertyTax?.mode === 'prop13' &&
+    property.purchase === undefined &&
+    property.propertyTax.factoredBaseYearValue === undefined
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['propertyTax', 'factoredBaseYearValue'],
+      message: 'An already-owned Prop 13 property requires its current factored base-year value.',
+    })
+  }
+  if (
+    property.propertyTax?.mode === 'prop13' &&
+    property.purchase !== undefined &&
+    property.propertyTax.factoredBaseYearValue !== undefined
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['propertyTax', 'factoredBaseYearValue'],
+      message: 'A future purchase establishes its Prop 13 base from the acquisition price.',
     })
   }
 })

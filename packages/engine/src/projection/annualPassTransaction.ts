@@ -70,6 +70,7 @@ export interface SimulatorAnnualPassStateBindings {
   rothCounterfactualFreeCoverConsumed: Map<string, number>
   propertyValues: Map<string, number>
   propertyCostBases: Map<string, number>
+  propertyFactoredBaseValues: Map<string, number>
   propertyMortgageBalances: Map<string, number>
   propertyMortgageAnnualPayments: Map<string, number>
   hecmStates: Map<string, SimulatorAnnualPassHecmState>
@@ -169,6 +170,7 @@ interface AnnualPassSnapshot {
   rothCounterfactualFreeCoverConsumed: Array<[string, number]>
   propertyValues: Array<[string, number]>
   propertyCostBases: Array<[string, number]>
+  propertyFactoredBaseValues: Array<[string, number]>
   propertyMortgageBalances: Array<[string, number]>
   propertyMortgageAnnualPayments: Array<[string, number]>
   hecmStates: Array<[string, SimulatorAnnualPassHecmState]>
@@ -307,6 +309,10 @@ function captureSnapshot(bindings: SimulatorAnnualPassStateBindings): AnnualPass
     ),
     propertyValues: snapshotMap(bindings.propertyValues, (value) => value),
     propertyCostBases: snapshotMap(bindings.propertyCostBases, (value) => value),
+    propertyFactoredBaseValues: snapshotMap(
+      bindings.propertyFactoredBaseValues,
+      (value) => value,
+    ),
     propertyMortgageBalances: snapshotMap(
       bindings.propertyMortgageBalances,
       (value) => value,
@@ -401,6 +407,11 @@ function restoreSnapshot(bindings: SimulatorAnnualPassStateBindings, snapshot: A
   )
   restoreMap(bindings.propertyValues, snapshot.propertyValues, (value) => value)
   restoreMap(bindings.propertyCostBases, snapshot.propertyCostBases, (value) => value)
+  restoreMap(
+    bindings.propertyFactoredBaseValues,
+    snapshot.propertyFactoredBaseValues,
+    (value) => value,
+  )
   restoreMap(
     bindings.propertyMortgageBalances,
     snapshot.propertyMortgageBalances,

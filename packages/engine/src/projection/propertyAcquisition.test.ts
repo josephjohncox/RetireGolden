@@ -171,6 +171,46 @@ describe('dated property acquisition', () => {
     )
   })
 
+  it('pays off an embedded mortgage in a configured future year', () => {
+    const plan = basePlan()
+    plan.accounts.push({
+      type: 'property',
+      id: 'payoff-home',
+      name: 'Payoff home',
+      ownerPersonId: null,
+      annualReturnPct: null,
+      value: 300_000,
+      plannedSaleYear: null,
+      expectedNetProceeds: null,
+      purchase: {
+        year: 2028,
+        purchasePrice: 300_000,
+        purchasePriceBasis: 'purchaseYearNominal',
+        financing: {
+          type: 'mortgage',
+          downPaymentPct: 20,
+          interestPct: 6,
+          termYears: 30,
+          payoffYear: 2030,
+        },
+      },
+    } as Account)
+
+    const result = run(plan)
+    const beforePayoff = result.years.find((entry) => entry.year === 2029)!
+    const payoff = result.years.find((entry) => entry.year === 2030)!
+    const afterPayoff = result.years.find((entry) => entry.year === 2031)!
+    const openingPayoffBalance = beforePayoff.propertyMortgageBalances?.['payoff-home'] ?? 0
+
+    expect(payoff.expenses.debtService).toBeCloseTo(
+      openingPayoffBalance * 1.06,
+      2,
+    )
+    expect(payoff.propertyMortgageBalances).toEqual({})
+    expect(payoff.balances['payoff-home']).toBeCloseTo(300_000, 2)
+    expect(afterPayoff.expenses.debtService).toBe(0)
+  })
+
   it('prices a today-dollar purchase from the realized inflation path without pre-acquisition drift', () => {
     const plan = basePlan()
     plan.accounts.push({
@@ -368,6 +408,89 @@ describe('dated property acquisition', () => {
     expect(year.balances['home-a'] ?? 0).toBe(0)
     expect(year.balances['home-b'] ?? 0).toBe(0)
     expect(year.investableTotal).toBeCloseTo(300_000, 2)
+  })
+
+  it('applies market-value property tax, insurance, and maintenance only while owned', () => {
+    const plan = basePlan()
+    const cash = plan.accounts.find((account) => account.type === 'cash')!
+    if (cash.type !== 'cash') throw new Error('expected cash account')
+    cash.balance = 2_000_000
+    plan.accounts.push({
+      type: 'property',
+      id: 'serviced-home',
+      name: 'Serviced home',
+      ownerPersonId: null,
+      annualReturnPct: null,
+      value: 500_000,
+      plannedSaleYear: 2030,
+      expectedNetProceeds: null,
+      propertyTax: { mode: 'marketValuePct', annualPct: 1 },
+      insurance: { mode: 'propertyValuePct', annualPct: 0.5 },
+      maintenance: { mode: 'propertyValuePct', annualPct: 1 },
+      purchase: {
+        year: 2028,
+        purchasePrice: 500_000,
+        purchasePriceBasis: 'purchaseYearNominal',
+        financing: { type: 'cash' },
+      },
+    } as unknown as Account)
+
+    const result = run(plan)
+    const before = result.years.find((entry) => entry.year === 2027)!
+    const acquired = result.years.find((entry) => entry.year === 2028)!
+    const held = result.years.find((entry) => entry.year === 2029)!
+    const sold = result.years.find((entry) => entry.year === 2030)!
+
+    expect(before.expenses.propertyCosts).toBe(0)
+    expect(acquired.expenses.propertyTax).toBeCloseTo(5_000, 2)
+    expect(acquired.expenses.propertyInsurance).toBeCloseTo(2_500, 2)
+    expect(acquired.expenses.propertyMaintenance).toBeCloseTo(5_000, 2)
+    expect(acquired.expenses.propertyCosts).toBeCloseTo(12_500, 2)
+    expect(held.expenses.propertyCosts).toBeCloseTo(12_500, 2)
+    expect(sold.expenses.propertyCosts).toBe(0)
+  })
+
+  it('caps a Prop 13 factored assessment while market value grows faster', () => {
+    const plan = basePlan()
+    const cash = plan.accounts.find((account) => account.type === 'cash')!
+    if (cash.type !== 'cash') throw new Error('expected cash account')
+    cash.balance = 2_000_000
+    plan.accounts.push({
+      type: 'property',
+      id: 'prop13-home',
+      name: 'California home',
+      ownerPersonId: null,
+      annualReturnPct: null,
+      value: 1_000_000,
+      plannedSaleYear: null,
+      expectedNetProceeds: null,
+      propertyTax: {
+        mode: 'prop13',
+        annualInflationCapPct: 2,
+        taxRatePct: 1.1,
+      },
+      purchase: {
+        year: 2027,
+        purchasePrice: 1_000_000,
+        purchasePriceBasis: 'purchaseYearNominal',
+        financing: { type: 'cash' },
+      },
+    } as Account)
+    const parsed = parsePlan(plan)
+    if (!parsed.ok) throw new Error(parsed.issues.join('; '))
+
+    const result = simulatePlan(parsed.plan, {
+      startYear: 2026,
+      taxCalculator: noTax,
+      market: { inflationPct: [0, 10, 10] },
+    })
+    const acquired = result.years.find((entry) => entry.year === 2027)!
+    const held = result.years.find((entry) => entry.year === 2028)!
+
+    expect(acquired.expenses.propertyTax).toBeCloseTo(11_000, 2)
+    expect(acquired.balances['prop13-home']).toBeCloseTo(1_100_000, 2)
+    expect(held.expenses.propertyTax).toBeCloseTo(11_220, 2)
+    expect(held.expenses.propertyTax).toBeLessThan(1_100_000 * 0.011)
   })
 
   it('fails closed when a purchase event predates the projection horizon', () => {

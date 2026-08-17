@@ -134,6 +134,7 @@ function bindings(): SimulatorAnnualPassStateBindings {
     rothCounterfactualFreeCoverConsumed: new Map([['p1', 50]]),
     propertyValues: new Map([['home', 500_000]]),
     propertyCostBases: new Map([['home', 300_000]]),
+    propertyFactoredBaseValues: new Map([['home', 280_000]]),
     propertyMortgageBalances: new Map([['home', 150_000]]),
     propertyMortgageAnnualPayments: new Map([['home', 12_000]]),
     hecmStates: new Map([['home', { principalLimit: 200_000, loanBalance: 25_000 }]]),
@@ -183,6 +184,7 @@ function annualPassStateBytes(
     rothCounterfactualFreeCoverConsumed: [...state.rothCounterfactualFreeCoverConsumed],
     propertyValues: [...state.propertyValues],
     propertyCostBases: [...state.propertyCostBases],
+    propertyFactoredBaseValues: [...state.propertyFactoredBaseValues],
     propertyMortgageBalances: [...state.propertyMortgageBalances],
     propertyMortgageAnnualPayments: [...state.propertyMortgageAnnualPayments],
     hecmStates: [...state.hecmStates],
@@ -246,6 +248,7 @@ function mutateEverything(state: SimulatorAnnualPassStateBindings): void {
   state.rothCounterfactualFreeCoverConsumed.set('p1', 2)
   state.propertyValues.set('home', 1)
   state.propertyCostBases.set('home', 2)
+  state.propertyFactoredBaseValues.set('home', 2.5)
   state.propertyMortgageBalances.set('home', 3)
   state.propertyMortgageAnnualPayments.set('home', 4)
   state.hecmStates.delete('home')

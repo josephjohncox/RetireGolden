@@ -2882,6 +2882,18 @@ export const planJsonSchema: JsonSchemaDocument = {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
+                          },
+                          "payoffYear": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 1900,
+                                "maximum": 2200
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -2944,9 +2956,154 @@ export const planJsonSchema: JsonSchemaDocument = {
                 "type": "number",
                 "minimum": 0
               },
+              "propertyTax": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "const": "fixedAnnual"
+                      },
+                      "annualAmount": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "annualAmount"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "const": "marketValuePct"
+                      },
+                      "annualPct": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "annualPct"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "const": "prop13"
+                      },
+                      "factoredBaseYearValue": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "annualInflationCapPct": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                      },
+                      "taxRatePct": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "annualInflationCapPct",
+                      "taxRatePct"
+                    ]
+                  }
+                ]
+              },
               "insuranceAnnual": {
                 "type": "number",
                 "minimum": 0
+              },
+              "insurance": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "const": "fixedAnnual"
+                      },
+                      "annualAmount": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "annualAmount"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "const": "propertyValuePct"
+                      },
+                      "annualPct": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "annualPct"
+                    ]
+                  }
+                ]
+              },
+              "maintenance": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "const": "fixedAnnual"
+                      },
+                      "annualAmount": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "annualAmount"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "const": "propertyValuePct"
+                      },
+                      "annualPct": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "annualPct"
+                    ]
+                  }
+                ]
               },
               "hecm": {
                 "type": "object",
@@ -5993,7 +6150,8 @@ export const planJsonSchema: JsonSchemaDocument = {
     "cliff-vesting equity compensation requires a vestDate.",
     "planning-only nondeductibleBasis (Form 8606) applies only to traditional IRAs and not to inherited accounts; it is not filing-grade annual tax evidence.",
     "hsa reimburse-later accumulation requires the capByMedicalExpenses withdrawal treatment.",
-    "property depreciationRecapture requires either a costBasis or an atomic purchase that establishes basis; a purchased property must be sold after its purchase year, may not also declare costBasis, and may not combine the same modeled lifecycle with a HECM; a HECM line of credit requires a primary residence.",
+    "property depreciationRecapture requires either a costBasis or an atomic purchase that establishes basis; a purchased property must be sold after its purchase year, an embedded mortgage payoff must be after purchase, the property may not also declare costBasis, and it may not combine the same modeled lifecycle with a HECM; a HECM line of credit requires a primary residence.",
+    "propertyTax and insurance may not be combined with their legacy annual fields; an already-owned Prop 13 property requires a factored base-year value, while a future purchase must derive that base from its acquisition price.",
     "an estateBeneficiary charity destination requires charityPct.",
     "inherited Roth accounts are refused by accountSchema and simulatePlan (regime matrix K1/K2); this is temporary until the inherited-Roth regime engine is executable.",
     "an EDB category other than 'none' requires beneficiaryClass 'designated-individual'.",

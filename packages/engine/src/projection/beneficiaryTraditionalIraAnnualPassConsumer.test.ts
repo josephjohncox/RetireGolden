@@ -282,6 +282,7 @@ function state(): { bindings: SimulatorAnnualPassStateBindings; scalars: Scalars
       rothAssumedContributionRemaining: new Map(),
       rothCounterfactualFreeCoverConsumed: new Map(),
       propertyValues: new Map(), propertyCostBases: new Map(),
+      propertyFactoredBaseValues: new Map(),
       propertyMortgageBalances: new Map(),
       propertyMortgageAnnualPayments: new Map(), hecmStates: new Map(),
       insuranceCashValues: new Map(), allocationTrack: new Map(),
@@ -346,6 +347,7 @@ function stateBytes(value: SimulatorAnnualPassStateBindings): string {
     rothCounterfactualFreeCoverConsumed: [...value.rothCounterfactualFreeCoverConsumed],
     properties: [...value.propertyValues],
     propertyCostBases: [...value.propertyCostBases],
+    propertyFactoredBaseValues: [...value.propertyFactoredBaseValues],
     propertyMortgageBalances: [...value.propertyMortgageBalances],
     propertyMortgageAnnualPayments: [...value.propertyMortgageAnnualPayments],
     hecm: [...value.hecmStates], insurance: [...value.insuranceCashValues],
@@ -388,6 +390,7 @@ function mutateAll(value: SimulatorAnnualPassStateBindings): void {
   value.rothCounterfactualFreeCoverConsumed.set('x', 1)
   value.propertyValues.set('x', 1)
   value.propertyCostBases.set('x', 1)
+  value.propertyFactoredBaseValues.set('x', 1)
   value.propertyMortgageBalances.set('x', 1)
   value.propertyMortgageAnnualPayments.set('x', 1)
   value.hecmStates.set('x', { principalLimit: 1, loanBalance: 1 })
