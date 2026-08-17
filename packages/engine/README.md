@@ -6,8 +6,9 @@ year by year and models federal + state taxes, Social Security (claiming,
 spousal/survivor, PIA from earnings), RMDs, Roth conversions, withdrawal
 strategies, insurance, Monte Carlo, and an LP-based optimizer.
 
-Source of truth: [github.com/RetireGolden/RetireGolden](https://github.com/RetireGolden/RetireGolden)
-(`packages/engine`). Engineering docs live in the repo's `DOCS/`.
+Maintained fork source: [github.com/josephjohncox/RetireGolden](https://github.com/josephjohncox/RetireGolden)
+(`feature/property-acquisition-events`, `packages/engine`). The upstream baseline remains
+[RetireGolden/RetireGolden](https://github.com/RetireGolden/RetireGolden). Engineering docs live in the repo's `DOCS/`.
 
 ## Runtime contract
 
