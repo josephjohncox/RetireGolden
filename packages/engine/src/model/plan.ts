@@ -1158,8 +1158,10 @@ export const propertyPurchaseFinancingSchema = z.discriminatedUnion('type', [
     downPaymentPct: z.number().min(0).max(100),
     /** Nominal annual mortgage rate. */
     interestPct: pct,
-    /** Amortization term used to derive the level monthly principal-and-interest payment. */
+    /** Amortization term used to derive the default level monthly principal-and-interest payment. */
     termYears: z.number().int().min(1).max(50),
+    /** Optional lender-quoted monthly principal-and-interest payment. */
+    monthlyPayment: nonNegative.optional(),
     /** Optional future year to pay the remaining mortgage balance through the withdrawal waterfall. */
     payoffYear: calendarYear.nullable().optional(),
   }),

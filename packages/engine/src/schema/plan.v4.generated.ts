@@ -2883,6 +2883,10 @@ export const planJsonSchema: JsonSchemaDocument = {
                             "minimum": 1,
                             "maximum": 50
                           },
+                          "monthlyPayment": {
+                            "type": "number",
+                            "minimum": 0
+                          },
                           "payoffYear": {
                             "anyOf": [
                               {

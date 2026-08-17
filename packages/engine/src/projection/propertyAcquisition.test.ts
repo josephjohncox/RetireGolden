@@ -171,6 +171,39 @@ describe('dated property acquisition', () => {
     )
   })
 
+  it('uses a lender-quoted monthly payment when supplied', () => {
+    const plan = basePlan()
+    plan.accounts.push({
+      type: 'property',
+      id: 'quoted-payment-home',
+      name: 'Quoted payment home',
+      ownerPersonId: null,
+      annualReturnPct: null,
+      value: 300_000,
+      plannedSaleYear: null,
+      expectedNetProceeds: null,
+      purchase: {
+        year: 2028,
+        purchasePrice: 300_000,
+        purchasePriceBasis: 'purchaseYearNominal',
+        financing: {
+          type: 'mortgage',
+          downPaymentPct: 20,
+          interestPct: 6,
+          termYears: 30,
+          monthlyPayment: 2_000,
+        },
+      },
+    } as Account)
+
+    const year = run(plan).years.find((entry) => entry.year === 2028)!
+    expect(year.expenses.debtService).toBeCloseTo(24_000, 2)
+    expect(year.propertyAcquisitions?.[0]?.mortgagePayment).toBeCloseTo(
+      24_000,
+      2,
+    )
+  })
+
   it('pays off an embedded mortgage in a configured future year', () => {
     const plan = basePlan()
     plan.accounts.push({

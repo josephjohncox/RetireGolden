@@ -3003,10 +3003,11 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         if (purchase.financing.type === 'mortgage' && mortgagePrincipal > 0) {
           const months = purchase.financing.termYears * 12
           const monthlyRate = purchase.financing.interestPct / 100 / 12
-          monthlyPayment = monthlyRate === 0
-            ? mortgagePrincipal / months
-            : mortgagePrincipal * monthlyRate * Math.pow(1 + monthlyRate, months) /
-              (Math.pow(1 + monthlyRate, months) - 1)
+          monthlyPayment = purchase.financing.monthlyPayment ??
+            (monthlyRate === 0
+              ? mortgagePrincipal / months
+              : mortgagePrincipal * monthlyRate * Math.pow(1 + monthlyRate, months) /
+                (Math.pow(1 + monthlyRate, months) - 1))
         }
         const mortgageWithInterest =
           mortgagePrincipal *
