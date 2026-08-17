@@ -364,6 +364,24 @@ describe('dated property acquisition', () => {
     expect(sold.expenses.debtService).toBe(0)
     expect(sold.balances['sale-home']).toBe(0)
     expect(sold.propertyMortgageBalances).toEqual({})
+    expect(sold.propertySaleProceeds).toBeCloseTo(
+      300_000 - mortgageAtSale,
+      2,
+    )
+    expect(sold.propertyDispositions).toEqual([
+      {
+        propertyAccountId: 'sale-home',
+        salePrice: 300_000,
+        sellingCosts: 0,
+        costBasis: 300_000,
+        mortgagePayoff: expect.closeTo(mortgageAtSale, 2),
+        hecmPayoff: 0,
+        netCashProceeds: expect.closeTo(300_000 - mortgageAtSale, 2),
+        ordinaryGain: 0,
+        capitalGain: 0,
+        excludedGain: 0,
+      },
+    ])
     expect(sold.realizedGains).toBeCloseTo(0, 2)
     expect(sold.investableTotal).toBeCloseTo(expectedCashAfterSale, 2)
     expect(sold.netWorth).toBeCloseTo(expectedCashAfterSale, 2)
@@ -400,6 +418,7 @@ describe('dated property acquisition', () => {
 
     expect(year.propertyAcquisitions?.[0]?.status).toBe('executed')
     expect(year.propertyAcquisitionOutlay).toBeCloseTo(250_000, 2)
+    expect(year.propertySaleProceeds).toBeCloseTo(300_000, 2)
     expect(year.withdrawals.total).toBe(0)
     expect(year.balances['old-home']).toBe(0)
     expect(year.balances['future-home']).toBeCloseTo(250_000, 2)

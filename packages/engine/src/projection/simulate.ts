@@ -3688,6 +3688,18 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     // legacy tax-free deposit. Without a cost basis the legacy
     // expectedNetProceeds path is untouched.
     let propertySaleProceedsTotal = 0
+    const propertyDispositions: Array<{
+      propertyAccountId: string
+      salePrice: number
+      sellingCosts: number
+      costBasis: number
+      mortgagePayoff: number
+      hecmPayoff: number
+      netCashProceeds: number
+      ordinaryGain: number
+      capitalGain: number
+      excludedGain: number
+    }> = []
     for (const account of plan.accounts) {
       if (account.type !== 'property' || account.plannedSaleYear !== year) continue
       const costBasis = propertyCostBases.get(account.id)
@@ -3696,8 +3708,9 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       if (value <= 0) continue
       // Match the property-events block: the sale year's inflation growth
       // accrues before the sale.
+      const salePrice = value * (1 + inflRateAt(year))
       const sale = propertySaleTax({
-        salePrice: value * (1 + inflRateAt(year)),
+        salePrice,
         costBasis,
         sellingCostPct: account.sellingCostPct,
         primaryResidence: account.primaryResidence,
@@ -3723,8 +3736,21 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         )
         hecmStates.delete(account.id)
       }
-      propertySaleProceedsTotal +=
+      const netCashProceeds =
         sale.netProceeds - mortgagePayoff - hecmPayoff
+      propertySaleProceedsTotal += netCashProceeds
+      propertyDispositions.push({
+        propertyAccountId: account.id,
+        salePrice,
+        sellingCosts: sale.sellingCosts,
+        costBasis,
+        mortgagePayoff,
+        hecmPayoff,
+        netCashProceeds,
+        ordinaryGain: sale.ordinaryGain,
+        capitalGain: sale.capitalGain,
+        excludedGain: sale.excludedGain,
+      })
     }
 
     // --- contributions & employer match --------------------
@@ -10132,6 +10158,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       propertyAcquisitionOutlay,
       propertyAcquisitions,
       propertyMortgageBalances: propertyMortgageBalanceRecord,
+      propertySaleProceeds: propertySaleProceedsTotal,
+      propertyDispositions,
       shortfall: shortfallAfterHecm,
       requiredShortfall,
       targetShortfall,

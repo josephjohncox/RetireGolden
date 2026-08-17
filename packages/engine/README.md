@@ -157,7 +157,10 @@ caller supplies the effective tax rate, including any local bonded-debt levy.
 It does not infer exclusions, portability, supplemental assessments, new
 construction, or partial ownership changes. Insurance and maintenance each
 support fixed annual dollars or a percentage of opening property value. All
-three costs continue after mortgage payoff and stop in the sale year.
+three costs continue after mortgage payoff and stop in the sale year. A planned
+sale repays the embedded mortgage and any HECM before its net cash enters the
+same-year funding flow. `YearResult.propertyDispositions` publishes sale price,
+selling costs, basis, debt payoff, gain character, and net cash proceeds.
 
 ### Dated W-2 jobs and employer healthcare
 

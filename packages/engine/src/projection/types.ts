@@ -1384,6 +1384,20 @@ export interface PropertyAcquisitionActivity {
   costBasis: number
 }
 
+export interface PropertyDispositionActivity {
+  propertyAccountId: string
+  salePrice: number
+  sellingCosts: number
+  costBasis: number
+  mortgagePayoff: number
+  hecmPayoff: number
+  /** Net cash entering the annual funding flow after selling costs and debt payoff. */
+  netCashProceeds: number
+  ordinaryGain: number
+  capitalGain: number
+  excludedGain: number
+}
+
 export interface YearResult {
   year: number
   /**
@@ -1767,6 +1781,10 @@ export interface YearResult {
   propertyAcquisitions?: readonly Readonly<PropertyAcquisitionActivity>[]
   /** Remaining embedded mortgage principal by property account id. */
   propertyMortgageBalances?: Readonly<Record<string, number>>
+  /** Net cash from exact-basis property dispositions entering this year's funding flow. */
+  propertySaleProceeds?: number
+  /** Exact-basis property dispositions completed this year. */
+  propertyDispositions?: readonly Readonly<PropertyDispositionActivity>[]
   /** Spending the portfolio could not cover this year. */
   shortfall: number
   /**
