@@ -12,6 +12,7 @@ export const SIMULATOR_ANNUAL_PASS_VALUE_BINDING_KEYS = [
   'capitalLossPool',
   'shortTermCapitalLossPool',
   'longTermCapitalLossPool',
+  'minimumTaxCreditCarryforward',
   'hsaReimbursablePool',
   'depletionYear',
   'conversionNontaxable',

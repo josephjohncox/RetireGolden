@@ -103,6 +103,10 @@ export const planJsonSchema: JsonSchemaDocument = {
           "type": "number",
           "minimum": 0
         },
+        "minimumTaxCreditCarryforward": {
+          "type": "number",
+          "minimum": 0
+        },
         "people": {
           "minItems": 1,
           "maxItems": 2,
@@ -4037,6 +4041,17 @@ export const planJsonSchema: JsonSchemaDocument = {
                 "exclusiveMinimum": 0
               },
               "grantDate": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "vestingStartDate": {
                 "anyOf": [
                   {
                     "type": "string",

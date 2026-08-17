@@ -15,6 +15,7 @@ interface ScalarState {
   capitalLossPool: number
   shortTermCapitalLossPool: number
   longTermCapitalLossPool: number
+  minimumTaxCreditCarryforward: number
   hsaReimbursablePool: number
   depletionYear: number | null
   conversionNontaxable: number
@@ -69,6 +70,7 @@ function fixture(): {
     capitalLossPool: 3,
     shortTermCapitalLossPool: 3.1,
     longTermCapitalLossPool: 3.2,
+    minimumTaxCreditCarryforward: 3.3,
     hsaReimbursablePool: 4,
     depletionYear: null,
     conversionNontaxable: 5,
@@ -229,6 +231,8 @@ function fixture(): {
     capitalLossPool: valueBinding(scalars, 'capitalLossPool'),
     shortTermCapitalLossPool: valueBinding(scalars, 'shortTermCapitalLossPool'),
     longTermCapitalLossPool: valueBinding(scalars, 'longTermCapitalLossPool'),
+    minimumTaxCreditCarryforward:
+      valueBinding(scalars, 'minimumTaxCreditCarryforward'),
     hsaReimbursablePool: valueBinding(scalars, 'hsaReimbursablePool'),
     depletionYear: valueBinding(scalars, 'depletionYear'),
     conversionNontaxable: valueBinding(scalars, 'conversionNontaxable'),
@@ -275,6 +279,8 @@ function stateBytes(bindings: SimulatorAnnualPassStateBindings): string {
       capitalLossPool: bindings.capitalLossPool.read(),
       shortTermCapitalLossPool: bindings.shortTermCapitalLossPool.read(),
       longTermCapitalLossPool: bindings.longTermCapitalLossPool.read(),
+      minimumTaxCreditCarryforward:
+        bindings.minimumTaxCreditCarryforward.read(),
       hsaReimbursablePool: bindings.hsaReimbursablePool.read(),
       depletionYear: bindings.depletionYear.read(),
       conversionNontaxable: bindings.conversionNontaxable.read(),
@@ -428,6 +434,7 @@ function mutateEntireAnnualPass(bindings: SimulatorAnnualPassStateBindings): voi
   bindings.unassignedCash.write(401)
   bindings.priorYearPortfolioReturnPct.write(402)
   bindings.capitalLossPool.write(403)
+  bindings.minimumTaxCreditCarryforward.write(403.5)
   bindings.hsaReimbursablePool.write(404)
   bindings.depletionYear.write(2035)
   bindings.conversionNontaxable.write(406)

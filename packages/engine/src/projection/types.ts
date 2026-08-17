@@ -155,6 +155,15 @@ export interface TaxYearInput {
    */
   amtPreferenceItems?: number
   /**
+   * Portion of amtPreferenceItems treated as Form 8801 deferral items. The
+   * current engine source is ISO regular/AMT basis difference. Omit to treat
+   * all explicit amtPreferenceItems as deferral items; built-in deduction/SALT
+   * add-backs remain exclusion items.
+   */
+  minimumTaxCreditDeferralItems?: number
+  /** Prior-year Form 8801 line 26 credit entering this tax year. */
+  minimumTaxCreditCarryforward?: number
+  /**
    * Cumulative general-inflation factor from the parameter pack's year to this
    * one, used to project the annually-indexed federal figures (rate brackets,
    * standard deduction, capital-gain breakpoints, AMT amounts) onto a year the
@@ -1759,6 +1768,12 @@ export interface YearResult {
   advisoryFederalTax?: Readonly<{ input: TaxYearInput; detail: FederalTaxDetail }>
   /** Federal alternative minimum tax included in `tax` when the planning-grade AMT screen binds. */
   amt: number
+  /** Form 8801 credit from prior years allowed against this year's federal tax. */
+  minimumTaxCreditUsed?: number
+  /** Current deferral-item AMT becoming available as minimum-tax credit next year. */
+  minimumTaxCreditGenerated?: number
+  /** Form 8801 credit carried into the next projection year. */
+  minimumTaxCreditCarryforwardRemaining?: number
   /** Additional long-term gains realizable this year still taxed at 0% (gain-harvesting advisory). */
   ltcgZeroHeadroom: number
   /** Benefits withheld by the retirement earnings test (working early claimants). */
@@ -1818,6 +1833,8 @@ export interface YearResult {
    * Not the same as running out of money for essentials (see requiredShortfall).
    */
   targetShortfall: number
+  /** Target lifestyle dollars deliberately removed by the guardrail this year. */
+  guardrailCutAmount?: number
   /** Ideal spending not funded this year. */
   idealShortfall: number
   /** Excess/opportunistic spending not funded this year. */

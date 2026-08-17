@@ -93,6 +93,42 @@ describe('createEmptyPlan', () => {
 })
 
 describe('parsePlan', () => {
+  it('preserves vesting commencement and rejects a start after the first vest', () => {
+    const plan = validCouplePlan()
+    plan.equity = {
+      grants: [
+        {
+          id: 'grant',
+          companyId: 'company',
+          companyName: 'Company',
+          ownerPersonId: 'p1',
+          instrument: 'iso',
+          shares: 100,
+          grantDate: '2026-01-01',
+          vestingStartDate: '2026-01-15',
+          strikePrice: 5,
+          vestingSchedule: [{ date: '2027-01-15', shares: 100 }],
+          openingLots: [],
+        },
+      ],
+      transactions: [],
+    }
+    const valid = parsePlan(plan)
+    expect(valid.ok).toBe(true)
+    if (valid.ok) {
+      expect(valid.plan.equity.grants[0]?.vestingStartDate).toBe('2026-01-15')
+    }
+
+    plan.equity.grants[0]!.vestingStartDate = '2027-01-16'
+    const invalid = parsePlan(plan)
+    expect(invalid.ok).toBe(false)
+    if (!invalid.ok) {
+      expect(invalid.issues.join(' ')).toContain(
+        'equity vesting start cannot follow the first vesting tranche',
+      )
+    }
+  })
+
   it('rejects malformed ACA family and coverage identity structure', () => {
     const duplicateFamily = validCouplePlan()
     setAcaYearContract(duplicateFamily)

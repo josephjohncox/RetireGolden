@@ -150,7 +150,8 @@ export function runMonteCarloPaths(plan: Plan, opts: MonteCarloPathOptions): Mon
       const yr = result.years[y]!
       investableByYear[y] = yr.investableTotal
       const guardrailFactor = yr.expenses.guardrailFactor
-      if (guardrailFactor < 1 - 1e-9) {
+      const guardrailCutAmount = yr.guardrailCutAmount ?? 0
+      if (guardrailCutAmount > SHORTFALL_EPSILON) {
         guardrailCutYears++
         currentCutSpellYears++
         if (currentCutSpellYears > longestGuardrailCutSpellYears) longestGuardrailCutSpellYears = currentCutSpellYears

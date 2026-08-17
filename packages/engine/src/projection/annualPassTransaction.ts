@@ -94,6 +94,7 @@ export interface SimulatorAnnualPassStateBindings {
   capitalLossPool: SimulatorAnnualPassValueBinding<number>
   shortTermCapitalLossPool: SimulatorAnnualPassValueBinding<number>
   longTermCapitalLossPool: SimulatorAnnualPassValueBinding<number>
+  minimumTaxCreditCarryforward: SimulatorAnnualPassValueBinding<number>
   hsaReimbursablePool: SimulatorAnnualPassValueBinding<number>
   depletionYear: SimulatorAnnualPassValueBinding<number | null>
   conversionNontaxable: SimulatorAnnualPassValueBinding<number>
@@ -188,6 +189,7 @@ interface AnnualPassSnapshot {
   capitalLossPool: number
   shortTermCapitalLossPool: number
   longTermCapitalLossPool: number
+  minimumTaxCreditCarryforward: number
   hsaReimbursablePool: number
   depletionYear: number | null
   conversionNontaxable: number
@@ -341,6 +343,8 @@ function captureSnapshot(bindings: SimulatorAnnualPassStateBindings): AnnualPass
     capitalLossPool: bindings.capitalLossPool.read(),
     shortTermCapitalLossPool: bindings.shortTermCapitalLossPool.read(),
     longTermCapitalLossPool: bindings.longTermCapitalLossPool.read(),
+    minimumTaxCreditCarryforward:
+      bindings.minimumTaxCreditCarryforward.read(),
     hsaReimbursablePool: bindings.hsaReimbursablePool.read(),
     depletionYear: bindings.depletionYear.read(),
     conversionNontaxable: bindings.conversionNontaxable.read(),
@@ -451,6 +455,9 @@ function restoreSnapshot(bindings: SimulatorAnnualPassStateBindings, snapshot: A
   bindings.capitalLossPool.write(snapshot.capitalLossPool)
   bindings.shortTermCapitalLossPool.write(snapshot.shortTermCapitalLossPool)
   bindings.longTermCapitalLossPool.write(snapshot.longTermCapitalLossPool)
+  bindings.minimumTaxCreditCarryforward.write(
+    snapshot.minimumTaxCreditCarryforward,
+  )
   bindings.hsaReimbursablePool.write(snapshot.hsaReimbursablePool)
   bindings.depletionYear.write(snapshot.depletionYear)
   bindings.conversionNontaxable.write(snapshot.conversionNontaxable)

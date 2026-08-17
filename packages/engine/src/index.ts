@@ -25,5 +25,10 @@ export { ENGINE_VERSION } from './version.js'
 // schema constant. @see ./schema/index.ts
 export { migratePlanToCurrent, type MigrateResult, type PlanLoadRepair } from './model/migrations.js'
 export { simulatePlan, type SimulateOptions } from './projection/simulate.js'
+export {
+  buildEquityTransactionLedger,
+  type EquityTransactionLedger,
+  type EquityYearLedger,
+} from './projection/equityTransactions.js'
 export type { ProjectionResult, YearResult } from './projection/types.js'
 export { summarizeProjection } from './projection/compare.js'

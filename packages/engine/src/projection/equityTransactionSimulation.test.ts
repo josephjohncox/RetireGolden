@@ -162,6 +162,43 @@ describe('native equity transactions in the annual ledger', () => {
     expect(year.balances.brokerage).toBe(5_000)
   })
 
+  it('carries Form 8801 credit from ISO deferral AMT and uses it after basis reversal', () => {
+    const plan = basePlan()
+    withIsoTransactions(plan)
+    const grant = plan.equity.grants[0]!
+    grant.shares = 10_000
+    const exercise = plan.equity.transactions[0]!
+    const sale = plan.equity.transactions[1]!
+    if (exercise.type !== 'exercise' || sale.type !== 'sale') {
+      throw new Error('equity fixture mismatch')
+    }
+    exercise.shares = 10_000
+    exercise.fmvPerShare = 100
+    sale.pricePerShare = 100
+    sale.dispositions[0]!.shares = 10_000
+
+    const years = run(plan).result.years
+    const exerciseYear = years.find((entry) => entry.year === 2026)!
+    const interveningYear = years.find((entry) => entry.year === 2027)!
+    const saleYear = years.find((entry) => entry.year === 2028)!
+
+    expect(exerciseYear.minimumTaxCreditGenerated).toBeGreaterThan(0)
+    expect(exerciseYear.minimumTaxCreditUsed).toBe(0)
+    expect(exerciseYear.minimumTaxCreditCarryforwardRemaining).toBeCloseTo(
+      exerciseYear.minimumTaxCreditGenerated!,
+      6,
+    )
+    expect(interveningYear.minimumTaxCreditUsed).toBe(0)
+    expect(interveningYear.minimumTaxCreditCarryforwardRemaining).toBeCloseTo(
+      exerciseYear.minimumTaxCreditCarryforwardRemaining!,
+      6,
+    )
+    expect(saleYear.minimumTaxCreditUsed).toBeGreaterThan(0)
+    expect(saleYear.minimumTaxCreditCarryforwardRemaining).toBeLessThan(
+      interveningYear.minimumTaxCreditCarryforwardRemaining!,
+    )
+  })
+
   it('fills the cash target and invests the rest of a cash inheritance', () => {
     const plan = basePlan()
     const cash = plan.accounts.find((account) => account.id === 'cash')!

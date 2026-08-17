@@ -79,6 +79,12 @@ export interface FederalTaxDetail {
   amtExemption: number
   tentativeMinimumTax: number
   alternativeMinimumTax: number
+  /** Form 8801 prior-year credit allowed against this year's regular-tax excess over TMT. */
+  minimumTaxCreditUsed: number
+  /** Current AMT attributable to modeled deferral rather than exclusion items; available next year. */
+  minimumTaxCreditGenerated: number
+  /** Opening credit less allowed credit plus current deferral credit generated. */
+  minimumTaxCreditCarryforward: number
   niit: number
   totalTax: number
   /** Additional long-term gains realizable this year still taxed at 0% (gain-harvesting headroom). */
@@ -615,6 +621,62 @@ export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
   const regularIncomeTax = ordinaryTax + capitalGainsTax
   const alternativeMinimumTax = Math.max(0, tmt - regularIncomeTax)
 
+  // Form 8801 permits a credit only for prior AMT caused by deferral items.
+  // Built-in standard/senior-deduction and SALT add-backs are exclusion items;
+  // the explicit signed ISO regular/AMT-basis difference is the currently
+  // modeled deferral item. Recompute prior-year AMT with that deferral removed
+  // to approximate Form 8801 lines 15–18.
+  const explicitAmtItems = input.amtPreferenceItems ?? 0
+  const minimumTaxCreditDeferralItems =
+    input.minimumTaxCreditDeferralItems ?? explicitAmtItems
+  const exclusionOnlyPreferenceItems =
+    saltPreference +
+    disallowedDeductionAddback +
+    (explicitAmtItems - minimumTaxCreditDeferralItems)
+  const exclusionOnlyAmti = Math.max(
+    0,
+    taxableIncome + exclusionOnlyPreferenceItems,
+  )
+  const exclusionOnlyExemption = amtExemptionAmount(
+    pack,
+    taxStatus,
+    exclusionOnlyAmti,
+  )
+  const exclusionOnlyTaxableExcess = Math.max(
+    0,
+    exclusionOnlyAmti - exclusionOnlyExemption,
+  )
+  const exclusionOnlyTmt = tentativeMinimumTax(
+    pack,
+    taxStatus,
+    exclusionOnlyTaxableExcess,
+    gains + qualifiedDividends,
+  )
+  const netMinimumTaxOnExclusionItems = Math.max(
+    0,
+    exclusionOnlyTmt - regularIncomeTax,
+  )
+  const minimumTaxCreditGenerated = Math.max(
+    0,
+    alternativeMinimumTax - netMinimumTaxOnExclusionItems,
+  )
+  const openingMinimumTaxCredit = Math.max(
+    0,
+    input.minimumTaxCreditCarryforward ?? 0,
+  )
+  // Form 8801 lines 22–25: allowed credit is limited to regular income tax
+  // over current tentative minimum tax. Current-year generated credit cannot
+  // enter this calculation; it first becomes available next year.
+  const minimumTaxCreditCapacity = Math.max(0, regularIncomeTax - tmt)
+  const minimumTaxCreditUsed = Math.min(
+    openingMinimumTaxCredit,
+    minimumTaxCreditCapacity,
+  )
+  const minimumTaxCreditCarryforward =
+    openingMinimumTaxCredit -
+    minimumTaxCreditUsed +
+    minimumTaxCreditGenerated
+
   const investmentIncome =
     Math.max(0, shortTermCapital) + gains + qualifiedDividends + Math.max(0, input.taxableInterestIncome ?? 0) + Math.max(0, input.ordinaryDividends ?? 0)
   const niitBase = Math.min(investmentIncome, Math.max(0, magi - pack.niit.magiThreshold[taxStatus]))
@@ -641,8 +703,15 @@ export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
     amtExemption,
     tentativeMinimumTax: tmt,
     alternativeMinimumTax,
+    minimumTaxCreditUsed,
+    minimumTaxCreditGenerated,
+    minimumTaxCreditCarryforward,
     niit,
-    totalTax: regularIncomeTax + alternativeMinimumTax + niit,
+    totalTax:
+      regularIncomeTax +
+      alternativeMinimumTax +
+      niit -
+      minimumTaxCreditUsed,
     zeroRateLtcgHeadroom: zeroRateLtcgHeadroom(
       pack,
       taxStatus,

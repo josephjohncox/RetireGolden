@@ -6,9 +6,8 @@ year by year and models federal + state taxes, Social Security (claiming,
 spousal/survivor, PIA from earnings), RMDs, Roth conversions, withdrawal
 strategies, insurance, Monte Carlo, and an LP-based optimizer.
 
-Maintained fork source: [github.com/josephjohncox/RetireGolden](https://github.com/josephjohncox/RetireGolden)
-(`feature/property-acquisition-events`, `packages/engine`). The upstream baseline remains
-[RetireGolden/RetireGolden](https://github.com/RetireGolden/RetireGolden). Engineering docs live in the repo's `DOCS/`.
+Source of truth: [github.com/RetireGolden/RetireGolden](https://github.com/RetireGolden/RetireGolden)
+(`packages/engine`). Engineering docs live in the repo's `DOCS/`.
 
 ## Runtime contract
 
@@ -202,8 +201,8 @@ reduces modeled ordinary wage income but leaves `incomes.wages` gross.
 
 ### Native equity transactions, windfalls, and surplus allocation
 
-`Plan.equity` records grants, opening tax lots, and dated exercise, vest, and
-lot-directed sale transactions. The projection derives tax character rather
+`Plan.equity` records grants, vesting commencement and schedules, opening tax
+lots, and dated exercise, vest, and lot-directed sale transactions. The projection derives tax character rather
 than accepting a caller-supplied split:
 
 - ISO exercise price is a capital outlay, outside `YearExpenses`; the bargain
@@ -225,9 +224,13 @@ tax events, not lifestyle spending. Unknown exercise-date FMV is never inferred:
 the lot and strike payment still execute, while the missing AMT/compensation fact
 is warned and omitted.
 
-The AMT calculation includes ISO adjustments but does not yet maintain the Form
-8801 minimum-tax-credit carryforward. NSO/RSU payroll withholding is also not a
-native payroll ledger. Private-company lots are tax-state evidence, not marked
+The federal ledger accepts an opening Form 8801 credit, limits current use to
+regular income tax over tentative minimum tax, generates next-year credit only
+for modeled deferral-item AMT, and carries the remainder without inflation.
+Built-in deduction and SALT add-backs remain exclusion items. This is
+planning-grade: foreign-tax-credit, MTCNOL, and unmodeled Form 6251 items still
+require return-level reconciliation. NSO/RSU payroll withholding is not a native
+payroll ledger. Private-company lots are tax-state evidence, not marked
 investment accounts, so unsold private shares are not assigned a speculative
 net-worth value.
 

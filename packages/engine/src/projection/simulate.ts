@@ -1077,6 +1077,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     plan.household.capitalLossCarryforwardShortTerm ?? 0
   let longTermCapitalLossPool =
     plan.household.capitalLossCarryforwardLongTerm ?? 0
+  // Form 8801 line 26 carryforward is nominal and non-expiring. Each annual
+  // pass computes its allowed current credit and next-year balance atomically.
+  let minimumTaxCreditCarryforward =
+    plan.household.minimumTaxCreditCarryforward ?? 0
   // Roth basis pools (contributions + conversion 5-year clocks) driving the Roth
   // ordering rules. The IRS aggregates an owner's Roth IRAs for ordering, so all
   // of one owner's Roth IRAs share a single pool; employer Roth (401k) accounts
@@ -3633,6 +3637,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     const targetLifestyleFunded = guardrailsActive
       ? targetLifestyle * Math.min(1, discretionaryMultiplier)
       : targetLifestyle
+    const guardrailCutAmount = Math.max(
+      0,
+      targetLifestyle - targetLifestyleFunded,
+    )
     const upsideBudget = guardrailsActive
       ? Math.max(0, discretionaryMultiplier - 1) * guardrailStepBasis
       : annualUpsideLifestyle
@@ -7328,6 +7336,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           capitalGains: netted.netCapitalGain,
           stateCapitalGainAddback: equityYear?.stateCapitalGainAddback ?? 0,
           amtPreferenceItems: equityYear?.amtAdjustment ?? 0,
+          minimumTaxCreditDeferralItems: equityYear?.amtAdjustment ?? 0,
+          minimumTaxCreditCarryforward,
           realizedCapitalGainsBeforeCarryforward:
             preWithdrawalCapitalResult,
           taxableInterestIncome: incomes.taxableInterest + ladderTaxableInterest,
@@ -8022,6 +8032,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           capitalGains: nettedProbe.netCapitalGain,
           stateCapitalGainAddback: equityYear?.stateCapitalGainAddback ?? 0,
           amtPreferenceItems: equityYear?.amtAdjustment ?? 0,
+          minimumTaxCreditDeferralItems: equityYear?.amtAdjustment ?? 0,
+          minimumTaxCreditCarryforward,
           realizedCapitalGainsBeforeCarryforward:
             preWithdrawalCapitalResult + withdrawalPlan.realizedGains,
           taxableInterestIncome: incomes.taxableInterest + ladderTaxableInterest,
@@ -8548,6 +8560,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       capitalGains: gainsRealized,
       stateCapitalGainAddback: equityYear?.stateCapitalGainAddback ?? 0,
       amtPreferenceItems: equityYear?.amtAdjustment ?? 0,
+      minimumTaxCreditDeferralItems: equityYear?.amtAdjustment ?? 0,
+      minimumTaxCreditCarryforward,
       realizedCapitalGainsBeforeCarryforward,
       taxableInterestIncome: incomes.taxableInterest + ladderTaxableInterest,
       taxExemptInterest: yearTaxExemptInterest,
@@ -8561,6 +8575,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       itemizedDeductions,
     }
     const federalDetail = computeFederalTax(advisoryFederalTaxInput)
+    minimumTaxCreditCarryforward =
+      federalDetail.minimumTaxCreditCarryforward
     const ltcgZeroHeadroom = federalDetail.zeroRateLtcgHeadroom
     if (federalDetail.alternativeMinimumTax > EPSILON) {
       warnings.add('The planning-grade AMT screen bound in at least one year; tax includes the AMT excess.')
@@ -9862,7 +9878,13 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       withdrawalShortfall: shortfallAfterHecm,
     })
     const requiredShortfall = shortfallAttribution.requiredShortfall + skippedRequiredNominal
-    const targetShortfall = shortfallAttribution.targetShortfall + skippedTargetNominal + skippedRequiredNominal
+    // Fixed ideal/excess goals can make aggregate funded spending exceed the
+    // target total even while the guardrail deliberately removes target-layer
+    // dollars. They may not mask that categorical target miss.
+    const targetShortfall =
+      Math.max(shortfallAttribution.targetShortfall, guardrailCutAmount) +
+      skippedTargetNominal +
+      skippedRequiredNominal
     const idealShortfall = shortfallAttribution.idealShortfall + skippedIdealNominal
     const excessShortfall = shortfallAttribution.excessShortfall + skippedExcessNominal
     const retirementRuntimeSource = Object.freeze({
@@ -10275,6 +10297,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       irmaaNextTierThreshold,
       advisoryFederalTax: { input: advisoryFederalTaxInput, detail: federalDetail },
       amt: federalDetail.alternativeMinimumTax,
+      minimumTaxCreditUsed: federalDetail.minimumTaxCreditUsed,
+      minimumTaxCreditGenerated: federalDetail.minimumTaxCreditGenerated,
+      minimumTaxCreditCarryforwardRemaining:
+        federalDetail.minimumTaxCreditCarryforward,
       ltcgZeroHeadroom,
       ssEarningsTestWithheld,
       ssdiPaid,
@@ -10303,6 +10329,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       shortfall: shortfallAfterHecm,
       requiredShortfall,
       targetShortfall,
+      guardrailCutAmount,
       idealShortfall,
       excessShortfall,
       guardrailAction,
@@ -10364,6 +10391,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       longTermCapitalLossPool: annualPassValueBinding(
         () => longTermCapitalLossPool,
         (value) => { longTermCapitalLossPool = value },
+      ),
+      minimumTaxCreditCarryforward: annualPassValueBinding(
+        () => minimumTaxCreditCarryforward,
+        (value) => { minimumTaxCreditCarryforward = value },
       ),
       hsaReimbursablePool: annualPassValueBinding(
         () => hsaReimbursablePool,

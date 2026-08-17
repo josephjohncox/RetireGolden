@@ -119,6 +119,7 @@ function state(plan?: Readonly<Plan>): SimulatorAnnualPassStateBindings {
     capitalLossPool: binding(0),
     shortTermCapitalLossPool: binding(0),
     longTermCapitalLossPool: binding(0),
+    minimumTaxCreditCarryforward: binding(0),
     hsaReimbursablePool: binding(0),
     depletionYear: binding<number | null>(null),
     conversionNontaxable: binding(0),
@@ -161,6 +162,8 @@ function stateBytes(value: SimulatorAnnualPassStateBindings): string {
     capitalLossPool: value.capitalLossPool.read(),
     shortTermCapitalLossPool: value.shortTermCapitalLossPool.read(),
     longTermCapitalLossPool: value.longTermCapitalLossPool.read(),
+    minimumTaxCreditCarryforward:
+      value.minimumTaxCreditCarryforward.read(),
     hsaReimbursablePool: value.hsaReimbursablePool.read(),
     depletionYear: value.depletionYear.read(),
     conversionNontaxable: value.conversionNontaxable.read(),

@@ -224,6 +224,8 @@ export const householdSchema = z.object({
   /** Character-preserving Schedule D carryforwards. Do not combine with the legacy net pool. */
   capitalLossCarryforwardShortTerm: nonNegative.optional(),
   capitalLossCarryforwardLongTerm: nonNegative.optional(),
+  /** Prior-year Form 8801 line 26 minimum-tax-credit carryforward. */
+  minimumTaxCreditCarryforward: nonNegative.optional(),
   people: z.array(personSchema).min(1).max(2),
 }).superRefine((household, ctx) => {
   if (
@@ -1783,6 +1785,8 @@ export const equityGrantSchema = z.object({
   instrument: z.enum(['iso', 'nso', 'rsu', 'espp', 'common', 'preferred']),
   shares: z.number().positive(),
   grantDate: isoDate.nullable(),
+  /** Service/vesting commencement; exact vest transactions remain authoritative. */
+  vestingStartDate: isoDate.nullable().optional(),
   strikePrice: nonNegative,
   vestingSchedule: z.array(z.object({
     date: isoDate,
@@ -2603,6 +2607,20 @@ export const planSchema = z
         })
       }
       const vested = grant.vestingSchedule.reduce((sum, row) => sum + row.shares, 0)
+      const firstVestDate = [...grant.vestingSchedule]
+        .map((row) => row.date)
+        .sort()[0]
+      if (
+        grant.vestingStartDate != null &&
+        firstVestDate !== undefined &&
+        grant.vestingStartDate > firstVestDate
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['equity', 'grants', grantIndex, 'vestingStartDate'],
+          message: 'equity vesting start cannot follow the first vesting tranche',
+        })
+      }
       if (vested > grant.shares + 1e-9) {
         ctx.addIssue({
           code: 'custom',

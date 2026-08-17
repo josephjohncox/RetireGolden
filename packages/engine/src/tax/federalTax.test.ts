@@ -293,6 +293,55 @@ describe('section 55 alternative minimum tax', () => {
   })
 })
 
+describe('Form 8801 minimum tax credit', () => {
+  it('generates a next-year credit only from modeled deferral-item AMT', () => {
+    const isoExercise = computeFederalTax(input({
+      ordinaryIncome: 100_000,
+      amtPreferenceItems: 300_000,
+      minimumTaxCreditDeferralItems: 300_000,
+    }))
+
+    expect(isoExercise.alternativeMinimumTax).toBeGreaterThan(0)
+    expect(isoExercise.minimumTaxCreditGenerated).toBeGreaterThan(0)
+    expect(isoExercise.minimumTaxCreditUsed).toBe(0)
+    expect(isoExercise.minimumTaxCreditCarryforward).toBeCloseTo(
+      isoExercise.minimumTaxCreditGenerated,
+      6,
+    )
+
+    const exclusionOnly = computeFederalTax(input({
+      ordinaryIncome: 100_000,
+      amtPreferenceItems: 0,
+    }))
+    expect(exclusionOnly.minimumTaxCreditGenerated).toBe(0)
+  })
+
+  it('uses prior credit only up to regular tax over tentative minimum tax', () => {
+    const withoutCredit = computeFederalTax(input({ ordinaryIncome: 200_000 }))
+    const withCredit = computeFederalTax(input({
+      ordinaryIncome: 200_000,
+      minimumTaxCreditCarryforward: 50_000,
+    }))
+    const line24Capacity = Math.max(
+      0,
+      withCredit.ordinaryTax +
+        withCredit.capitalGainsTax -
+        withCredit.tentativeMinimumTax,
+    )
+
+    expect(withCredit.minimumTaxCreditUsed).toBeCloseTo(line24Capacity, 6)
+    expect(withCredit.minimumTaxCreditUsed).toBeLessThanOrEqual(50_000)
+    expect(withoutCredit.totalTax - withCredit.totalTax).toBeCloseTo(
+      withCredit.minimumTaxCreditUsed,
+      6,
+    )
+    expect(withCredit.minimumTaxCreditCarryforward).toBeCloseTo(
+      50_000 - withCredit.minimumTaxCreditUsed,
+      6,
+    )
+  })
+})
+
 describe('capital gains stacking', () => {
   // IRC 1(h)(1) measures the preferential bands from where ordinary taxable
   // income ends, not from zero. Taxing the gain independently is the natural

@@ -362,6 +362,11 @@ describe('runMonteCarloPaths + aggregate', () => {
     // Stressed guardrail plan: most paths cut at least once; magnitudes are
     // fractions of the discretionary layer, durations are plausible year counts.
     expect(a.adjustments.pathsWithCut).toBeGreaterThan(0.3)
+    // A reported cut must mean target dollars were actually removed. A path
+    // with such a cut cannot also satisfy the full-target-every-year measure.
+    expect(a.targetLifestyleSuccessRate).toBeLessThanOrEqual(
+      1 - a.adjustments.pathsWithCut + 1e-9,
+    )
     expect(a.adjustments.medianMaxCutDepth).toBeGreaterThan(0)
     expect(a.adjustments.medianMaxCutDepth).toBeLessThanOrEqual(1)
     expect(a.adjustments.p90MaxCutDepth).toBeGreaterThanOrEqual(a.adjustments.medianMaxCutDepth)
@@ -372,6 +377,69 @@ describe('runMonteCarloPaths + aggregate', () => {
 
     // Seed-stable: identical runs aggregate to identical adjustment metrics.
     expect(b.adjustments).toEqual(a.adjustments)
+  })
+
+  it('treats a target-layer cut as a target miss even when fixed ideal spending masks the total', () => {
+    const p = basePlan()
+    p.household.people[0]!.longevity = { planningAge: 66, source: 'manual' }
+    p.accounts = [taxable(1_000_000)]
+    p.expenses.baseAnnual = 300_000
+    p.expenses.requiredAnnual = 200_000
+    p.expenses.spendingPolicy = { mode: 'withdrawalRateGuardrails' }
+    p.expenses.oneTimeGoals = [2026, 2027].map((year) => ({
+      id: `ideal-${year}`,
+      label: `Fixed ideal ${year}`,
+      year,
+      amount: 200_000,
+      classification: 'ideal' as const,
+      flexibility: 'fixed' as const,
+    }))
+    const flat = createLognormalModel({
+      type: 'lognormal',
+      inflationMeanPct: 0,
+      inflationVolPct: 0,
+      returnVolPct: 0,
+    })
+
+    const summary = aggregateMonteCarlo(
+      runMonteCarloPaths(validate(p), {
+        startYear: 2026,
+        taxCalculator: noTax,
+        model: flat,
+        seed: 1,
+        pathCount: 1,
+      }),
+    )
+
+    expect(summary.adjustments.pathsWithCut).toBe(1)
+    expect(summary.targetLifestyleSuccessRate).toBe(0)
+  })
+
+  it('does not report a cut when a guardrail multiplier changes no target dollars', () => {
+    const volatile = createLognormalModel({
+      type: 'lognormal',
+      inflationMeanPct: 2.5,
+      returnVolPct: 25,
+    })
+    const p = basePlan()
+    p.accounts = [taxable(650_000)]
+    p.expenses.baseAnnual = 48_000
+    p.expenses.requiredAnnual = 48_000
+    p.expenses.spendingPolicy = { mode: 'withdrawalRateGuardrails' }
+
+    const summary = aggregateMonteCarlo(
+      runMonteCarloPaths(validate(p), {
+        startYear: 2026,
+        taxCalculator: noTax,
+        model: volatile,
+        seed: 11,
+        pathCount: 300,
+      }),
+    )
+
+    expect(summary.adjustments.pathsWithCut).toBe(0)
+    expect(summary.adjustments.averageCutYears).toBe(0)
+    expect(summary.adjustments.medianMaxCutDepth).toBe(0)
   })
 
   it('measures the surplus probability against the bequest target when one is set', () => {

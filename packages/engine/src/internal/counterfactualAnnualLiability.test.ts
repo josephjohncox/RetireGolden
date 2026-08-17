@@ -41,6 +41,7 @@ interface Scalars {
   capitalLossPool: number
   shortTermCapitalLossPool: number
   longTermCapitalLossPool: number
+  minimumTaxCreditCarryforward: number
   hsaReimbursablePool: number
   depletionYear: number | null
   conversionNontaxable: number
@@ -91,6 +92,7 @@ function bindings(): SimulatorAnnualPassStateBindings {
     capitalLossPool: 2_000,
     shortTermCapitalLossPool: 500,
     longTermCapitalLossPool: 600,
+    minimumTaxCreditCarryforward: 700,
     hsaReimbursablePool: 300,
     depletionYear: null,
     conversionNontaxable: 40,
@@ -161,6 +163,8 @@ function bindings(): SimulatorAnnualPassStateBindings {
     capitalLossPool: valueBinding(scalars, 'capitalLossPool'),
     shortTermCapitalLossPool: valueBinding(scalars, 'shortTermCapitalLossPool'),
     longTermCapitalLossPool: valueBinding(scalars, 'longTermCapitalLossPool'),
+    minimumTaxCreditCarryforward:
+      valueBinding(scalars, 'minimumTaxCreditCarryforward'),
     hsaReimbursablePool: valueBinding(scalars, 'hsaReimbursablePool'),
     depletionYear: valueBinding(scalars, 'depletionYear'),
     conversionNontaxable: valueBinding(scalars, 'conversionNontaxable'),
@@ -207,6 +211,8 @@ function annualPassStateBytes(
       capitalLossPool: state.capitalLossPool.read(),
       shortTermCapitalLossPool: state.shortTermCapitalLossPool.read(),
       longTermCapitalLossPool: state.longTermCapitalLossPool.read(),
+      minimumTaxCreditCarryforward:
+        state.minimumTaxCreditCarryforward.read(),
       hsaReimbursablePool: state.hsaReimbursablePool.read(),
       depletionYear: state.depletionYear.read(),
       conversionNontaxable: state.conversionNontaxable.read(),
