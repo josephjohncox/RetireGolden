@@ -20,8 +20,10 @@ import type { CareEvent } from '../model/plan.js'
 import type { Rng } from './rng.js'
 
 export interface LtcShockParams {
-  /** Probability a person experiences a paid-care episode in late life. */
+  /** Probability under `incidenceScope`, expressed as a fraction from 0 to 1. */
   incidence: number
+  /** Whether incidence applies independently to each person or to the household having at least one episode. */
+  incidenceScope?: 'perPerson' | 'household'
   /** Onset age sampled uniformly in [minOnsetAge, maxOnsetAge]. */
   minOnsetAge: number
   maxOnsetAge: number
@@ -33,6 +35,7 @@ export interface LtcShockParams {
 
 export const DEFAULT_LTC_SHOCK: LtcShockParams = {
   incidence: 0.5,
+  incidenceScope: 'perPerson',
   minOnsetAge: 80,
   maxOnsetAge: 90,
   durations: [
@@ -61,8 +64,13 @@ function pickDuration(rng: Rng, durations: LtcShockParams['durations']): number 
  */
 export function sampleCareEvents(rng: Rng, people: ReadonlyArray<{ id: string; dob: string }>, startYear: number, params: LtcShockParams): CareEvent[] {
   const events: CareEvent[] = []
+  const incidence = Math.max(0, Math.min(1, params.incidence))
+  const perPersonIncidence =
+    params.incidenceScope === 'household' && people.length > 0
+      ? 1 - Math.pow(1 - incidence, 1 / people.length)
+      : incidence
   for (const p of people) {
-    if (rng.next() >= params.incidence) continue
+    if (rng.next() >= perPersonIncidence) continue
     const span = Math.max(0, params.maxOnsetAge - params.minOnsetAge)
     const currentAge = startYear - Number(p.dob.slice(0, 4))
     const startAge = Math.max(currentAge, params.minOnsetAge + rng.nextInt(span + 1))

@@ -71,6 +71,7 @@ export interface MonteCarloPath {
   idealFunded: number
   excessIntended: number
   excessFunded: number
+  propertyAcquisitions: { planned: number; executed: number; skippedInsufficientFunds: number }
   flexibleGoals: { funded: number; partiallyFunded: number; deferred: number; skipped: number; fundedAmount: number; unfundedAmount: number }
   guardrailActionCounts: { cut: number; raise: number; hold: number }
   /** Years this path spent with the discretionary layer cut below full (guardrail plans only). */
@@ -140,6 +141,7 @@ export function runMonteCarloPaths(plan: Plan, opts: MonteCarloPathOptions): Mon
     let idealFunded = 0
     let excessIntended = 0
     let excessFunded = 0
+    const propertyAcquisitions = { planned: 0, executed: 0, skippedInsufficientFunds: 0 }
     const flexibleGoals = { funded: 0, partiallyFunded: 0, deferred: 0, skipped: 0, fundedAmount: 0, unfundedAmount: 0 }
     const guardrailActionCounts = { cut: 0, raise: 0, hold: 0 }
     let guardrailCutYears = 0
@@ -172,6 +174,11 @@ export function runMonteCarloPaths(plan: Plan, opts: MonteCarloPathOptions): Mon
       idealFunded += Math.max(0, yr.expenses.idealSpending - yr.idealShortfall)
       excessIntended += yr.expenses.excessSpending
       excessFunded += Math.max(0, yr.expenses.excessSpending - yr.excessShortfall)
+      for (const acquisition of yr.propertyAcquisitions ?? []) {
+        propertyAcquisitions.planned++
+        if (acquisition.status === 'executed') propertyAcquisitions.executed++
+        else propertyAcquisitions.skippedInsufficientFunds++
+      }
       flexibleGoals.funded += yr.flexibleGoals.funded
       flexibleGoals.partiallyFunded += yr.flexibleGoals.partiallyFunded
       flexibleGoals.deferred += yr.flexibleGoals.deferred
@@ -216,6 +223,7 @@ export function runMonteCarloPaths(plan: Plan, opts: MonteCarloPathOptions): Mon
       idealFunded,
       excessIntended,
       excessFunded,
+      propertyAcquisitions,
       flexibleGoals,
       guardrailActionCounts,
       guardrailCutYears,
@@ -268,6 +276,14 @@ export interface MonteCarloSummary {
   averageYearsBelowTarget: number
   idealFundingRate: number
   excessFundingRate: number
+  /** Execution of scheduled property purchases; rates are null when no path attempted a purchase. */
+  propertyAcquisitions: {
+    planned: number
+    executed: number
+    skippedInsufficientFunds: number
+    executionRate: number | null
+    allPlannedExecutedRate: number | null
+  }
   flexibleGoals: { funded: number; partiallyFunded: number; deferred: number; skipped: number; fundedAmount: number; unfundedAmount: number }
   guardrailActionCounts: { cut: number; raise: number; hold: number }
   /**
@@ -380,6 +396,11 @@ export function aggregateMonteCarlo(result: MonteCarloPathsResult, histogramBins
   let idealFundedTotal = 0
   let excessIntendedTotal = 0
   let excessFundedTotal = 0
+  let propertyAcquisitionsPlanned = 0
+  let propertyAcquisitionsExecuted = 0
+  let propertyAcquisitionsSkipped = 0
+  let pathsWithPropertyAcquisitions = 0
+  let pathsWithAllPropertyAcquisitionsExecuted = 0
   let totalShortfallTotal = 0
   let totalRequiredShortfallTotal = 0
   let totalTargetShortfallTotal = 0
@@ -423,6 +444,15 @@ export function aggregateMonteCarlo(result: MonteCarloPathsResult, histogramBins
     idealFundedTotal += p.idealFunded
     excessIntendedTotal += p.excessIntended
     excessFundedTotal += p.excessFunded
+    propertyAcquisitionsPlanned += p.propertyAcquisitions.planned
+    propertyAcquisitionsExecuted += p.propertyAcquisitions.executed
+    propertyAcquisitionsSkipped += p.propertyAcquisitions.skippedInsufficientFunds
+    if (p.propertyAcquisitions.planned > 0) {
+      pathsWithPropertyAcquisitions++
+      if (p.propertyAcquisitions.executed === p.propertyAcquisitions.planned) {
+        pathsWithAllPropertyAcquisitionsExecuted++
+      }
+    }
     flexibleGoals.funded += p.flexibleGoals.funded
     flexibleGoals.partiallyFunded += p.flexibleGoals.partiallyFunded
     flexibleGoals.deferred += p.flexibleGoals.deferred
@@ -483,6 +513,17 @@ export function aggregateMonteCarlo(result: MonteCarloPathsResult, histogramBins
     averageYearsBelowTarget: paths.length === 0 ? 0 : yearsBelowTargetTotal / paths.length,
     idealFundingRate: idealIntendedTotal > 0 ? idealFundedTotal / idealIntendedTotal : 1,
     excessFundingRate: excessIntendedTotal > 0 ? excessFundedTotal / excessIntendedTotal : 1,
+    propertyAcquisitions: {
+      planned: propertyAcquisitionsPlanned,
+      executed: propertyAcquisitionsExecuted,
+      skippedInsufficientFunds: propertyAcquisitionsSkipped,
+      executionRate:
+        propertyAcquisitionsPlanned === 0 ? null : propertyAcquisitionsExecuted / propertyAcquisitionsPlanned,
+      allPlannedExecutedRate:
+        pathsWithPropertyAcquisitions === 0
+          ? null
+          : pathsWithAllPropertyAcquisitionsExecuted / pathsWithPropertyAcquisitions,
+    },
     flexibleGoals,
     guardrailActionCounts,
     adjustments,

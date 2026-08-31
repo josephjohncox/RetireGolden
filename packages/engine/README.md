@@ -142,9 +142,11 @@ the property remains owned.
 
 Purchases scheduled in the same year execute as one batch. If the full batch is
 unfundable, the engine executes none of it and publishes
-`skippedInsufficientFunds` in `YearResult.propertyAcquisitions`. Purchase cash is
-a capital transaction reported in `propertyAcquisitionOutlay`; it is not added
-to `YearExpenses` or spending-success measures. A purchase event before the
+`skippedInsufficientFunds` in `YearResult.propertyAcquisitions`. `aggregateMonteCarlo`
+publishes the purchase-level execution rate and the share of paths in which every
+planned purchase executed. Purchase cash is a capital transaction reported in
+`propertyAcquisitionOutlay`; it is not added to `YearExpenses` or spending-success
+measures. A purchase event before the
 projection start fails closed: represent that property and mortgage as opening
 accounts instead. Combining an in-projection purchase with a HECM on the same
 property is not supported.

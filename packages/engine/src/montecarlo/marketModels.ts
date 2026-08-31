@@ -19,10 +19,12 @@
  */
 
 import {
+  accountAllocation,
   choleskyDecompose,
   DEFAULT_CLASS_CORRELATIONS,
   planUsesAssetAllocation,
   resolveAssetClassParams,
+  targetWeightsAt,
 } from '../allocation/assetClasses.js'
 import { ASSET_CLASS_IDS, type AssetClassId, type Plan } from '../model/plan.js'
 import type { MarketSeries } from '../projection/types.js'
@@ -222,7 +224,49 @@ export type MarketModelConfig =
   | GaussianModelConfig
   | AR1ModelConfig
 
-export function buildLognormalModelConfigForPlan(plan: Plan, returnVolPct = 12): LognormalModelConfig {
+export interface PlanLognormalModelConfigOptions {
+  /** Target annual volatility for the fallback shock and, when allocationYear is set, the reference allocated portfolio. */
+  returnVolPct?: number
+  /** Year whose plan allocation should be calibrated to returnVolPct. Omit to preserve raw class volatilities. */
+  allocationYear?: number
+  /** Correlation matrix used both for calibration and generated class shocks. */
+  classCorrelations?: number[][]
+}
+
+function referenceAllocationAt(plan: Plan, year: number): number[] | null {
+  const candidates = plan.accounts.flatMap((account) => {
+    const policy = accountAllocation(account)
+    if (!policy) return []
+    const balance = 'balance' in account && typeof account.balance === 'number' ? Math.max(0, account.balance) : 0
+    return [{ weights: targetWeightsAt(policy, year), balance }]
+  })
+  if (candidates.length === 0) return null
+  const positiveBalanceTotal = candidates.reduce((sum, candidate) => sum + candidate.balance, 0)
+  const blended = new Array<number>(ASSET_CLASS_IDS.length).fill(0)
+  for (const candidate of candidates) {
+    const share = positiveBalanceTotal > 0 ? candidate.balance / positiveBalanceTotal : 1 / candidates.length
+    for (let index = 0; index < blended.length; index++) blended[index] += share * candidate.weights[index]!
+  }
+  return blended
+}
+
+function portfolioVolatilityPct(weights: readonly number[], volatilities: readonly number[], correlations: readonly (readonly number[])[]): number {
+  let variance = 0
+  for (let row = 0; row < weights.length; row++) {
+    for (let column = 0; column < weights.length; column++) {
+      variance += weights[row]! * weights[column]! * volatilities[row]! * volatilities[column]! * correlations[row]![column]!
+    }
+  }
+  return Math.sqrt(Math.max(0, variance))
+}
+
+export function buildLognormalModelConfigForPlan(
+  plan: Plan,
+  returnVolPctOrOptions: number | PlanLognormalModelConfigOptions = 12,
+): LognormalModelConfig {
+  const options =
+    typeof returnVolPctOrOptions === 'number' ? { returnVolPct: returnVolPctOrOptions } : returnVolPctOrOptions
+  const returnVolPct = options.returnVolPct ?? 12
   const config: LognormalModelConfig = {
     type: 'lognormal',
     inflationMeanPct: plan.assumptions.inflationPct,
@@ -231,10 +275,24 @@ export function buildLognormalModelConfigForPlan(plan: Plan, returnVolPct = 12):
   if (!planUsesAssetAllocation(plan)) return config
 
   const params = resolveAssetClassParams(plan.assumptions.assetClassParams)
-  const volatilityPctByClass = Object.fromEntries(
+  let volatilityPctByClass = Object.fromEntries(
     ASSET_CLASS_IDS.map((id) => [id, params[id].volatilityPct]),
   ) as Record<AssetClassId, number>
-  return { ...config, classShocks: { volatilityPctByClass } }
+  const correlations = options.classCorrelations ?? DEFAULT_CLASS_CORRELATIONS.map((row) => [...row])
+  if (options.allocationYear !== undefined) {
+    const weights = referenceAllocationAt(plan, options.allocationYear)
+    if (weights) {
+      const rawVolatilities = ASSET_CLASS_IDS.map((id) => volatilityPctByClass[id])
+      const currentPortfolioVolPct = portfolioVolatilityPct(weights, rawVolatilities, correlations)
+      if (currentPortfolioVolPct > 0) {
+        const scale = Math.max(0, returnVolPct) / currentPortfolioVolPct
+        volatilityPctByClass = Object.fromEntries(
+          ASSET_CLASS_IDS.map((id) => [id, volatilityPctByClass[id] * scale]),
+        ) as Record<AssetClassId, number>
+      }
+    }
+  }
+  return { ...config, classShocks: { volatilityPctByClass, correlations } }
 }
 
 export function createMarketModel(config: MarketModelConfig): MarketModel {

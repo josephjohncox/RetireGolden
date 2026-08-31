@@ -12,14 +12,35 @@ describe('sampleCareEvents', () => {
     expect(a).toEqual(b)
   })
 
-  it('triggers at roughly the configured incidence over many draws', () => {
+  it('triggers at roughly the configured per-person incidence over many draws', () => {
     const rng = createRng(99)
-    const params: LtcShockParams = { ...DEFAULT_LTC_SHOCK, incidence: 0.5 }
+    const params: LtcShockParams = { ...DEFAULT_LTC_SHOCK, incidence: 0.5, incidenceScope: 'perPerson' }
     let hits = 0
     const N = 5_000
     for (let i = 0; i < N; i++) hits += sampleCareEvents(rng, people, 2026, params).length
     expect(hits / N).toBeGreaterThan(0.45)
     expect(hits / N).toBeLessThan(0.55)
+  })
+
+  it('interprets household incidence as the chance at least one person has an episode', () => {
+    const rng = createRng(101)
+    const couple = [
+      { id: 'p1', dob: '1960-01-01' },
+      { id: 'p2', dob: '1962-01-01' },
+    ]
+    const params: LtcShockParams = { ...DEFAULT_LTC_SHOCK, incidence: 0.5, incidenceScope: 'household' }
+    let householdsWithCare = 0
+    let peopleWithCare = 0
+    const N = 10_000
+    for (let i = 0; i < N; i++) {
+      const events = sampleCareEvents(rng, couple, 2026, params)
+      if (events.length > 0) householdsWithCare++
+      peopleWithCare += events.length
+    }
+    expect(householdsWithCare / N).toBeGreaterThan(0.48)
+    expect(householdsWithCare / N).toBeLessThan(0.52)
+    expect(peopleWithCare / (N * couple.length)).toBeGreaterThan(0.28)
+    expect(peopleWithCare / (N * couple.length)).toBeLessThan(0.31)
   })
 
   it('always produces care that is certain to fire at incidence 1, with valid bounds', () => {

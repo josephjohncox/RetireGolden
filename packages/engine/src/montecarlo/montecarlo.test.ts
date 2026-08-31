@@ -138,6 +138,44 @@ describe('lognormal model', () => {
     expect(config.classShocks?.volatilityPctByClass.usStocks).toBeGreaterThan(0)
     expect(config.classShocks?.volatilityPctByClass.bonds).toBeGreaterThan(0)
   })
+
+  it('calibrates class shocks to the lifecycle portfolio-volatility target', () => {
+    const allocated = validate({
+      ...basePlan(),
+      accounts: [
+        {
+          ...taxable(1_000_000),
+          allocation: {
+            mode: 'static',
+            rebalancing: 'annual',
+            weights: { usStocks: 60, intlStocks: 0, bonds: 40, cash: 0 },
+          },
+        },
+      ],
+    })
+    const correlations = [
+      [1, 0.78, -0.08, 0],
+      [0.78, 1, -0.02, 0],
+      [-0.08, -0.02, 1, 0.2],
+      [0, 0, 0.2, 1],
+    ]
+    const config = buildLognormalModelConfigForPlan(allocated, {
+      returnVolPct: 10,
+      allocationYear: 2026,
+      classCorrelations: correlations,
+    })
+    const classVols = config.classShocks!.volatilityPctByClass
+    const vol = [classVols.usStocks, classVols.intlStocks, classVols.bonds, classVols.cash]
+    const weights = [0.6, 0, 0.4, 0]
+    let variance = 0
+    for (let i = 0; i < weights.length; i++) {
+      for (let j = 0; j < weights.length; j++) {
+        variance += weights[i]! * weights[j]! * vol[i]! * vol[j]! * correlations[i]![j]!
+      }
+    }
+    expect(Math.sqrt(variance)).toBeCloseTo(10, 8)
+    expect(config.classShocks?.correlations).toEqual(correlations)
+  })
 })
 
 describe('historical bootstrap model', () => {
@@ -253,6 +291,89 @@ describe('runMonteCarloPaths + aggregate', () => {
     expect(depleted).toBe(Math.round((1 - summary.successRate) * 200))
     const lastDepletionPoint = summary.depletionProbabilityByYear.at(-1)
     if (lastDepletionPoint) expect(lastDepletionPoint.cumulativeProbability).toBeCloseTo(1 - summary.successRate, 10)
+    expect(summary.propertyAcquisitions).toEqual({
+      planned: 0,
+      executed: 0,
+      skippedInsufficientFunds: 0,
+      executionRate: null,
+      allPlannedExecutedRate: null,
+    })
+  })
+
+  it('reports whether planned property acquisitions execute', () => {
+    const plan = basePlan()
+    plan.accounts.push({
+      type: 'property',
+      id: 'future-home',
+      name: 'Future home',
+      ownerPersonId: null,
+      annualReturnPct: null,
+      value: 250_000,
+      plannedSaleYear: null,
+      expectedNetProceeds: null,
+      propertyTaxAnnual: 0,
+      insuranceAnnual: 0,
+      purchase: {
+        year: 2028,
+        purchasePrice: 250_000,
+        purchasePriceBasis: 'purchaseYearNominal',
+        financing: { type: 'cash' },
+      },
+    } as unknown as Account)
+    const summary = aggregateMonteCarlo(
+      runMonteCarloPaths(validate(plan), {
+        startYear: 2026,
+        taxCalculator: noTax,
+        model,
+        seed: 8,
+        pathCount: 20,
+      }),
+    )
+    expect(summary.propertyAcquisitions).toEqual({
+      planned: 20,
+      executed: 20,
+      skippedInsufficientFunds: 0,
+      executionRate: 1,
+      allPlannedExecutedRate: 1,
+    })
+  })
+
+  it('reports zero acquisition execution when every planned purchase is unaffordable', () => {
+    const plan = basePlan()
+    plan.accounts.push({
+      type: 'property',
+      id: 'unaffordable-home',
+      name: 'Unaffordable home',
+      ownerPersonId: null,
+      annualReturnPct: null,
+      value: 10_000_000,
+      plannedSaleYear: null,
+      expectedNetProceeds: null,
+      propertyTaxAnnual: 0,
+      insuranceAnnual: 0,
+      purchase: {
+        year: 2028,
+        purchasePrice: 10_000_000,
+        purchasePriceBasis: 'purchaseYearNominal',
+        financing: { type: 'cash' },
+      },
+    } as unknown as Account)
+    const summary = aggregateMonteCarlo(
+      runMonteCarloPaths(validate(plan), {
+        startYear: 2026,
+        taxCalculator: noTax,
+        model,
+        seed: 8,
+        pathCount: 20,
+      }),
+    )
+    expect(summary.propertyAcquisitions).toEqual({
+      planned: 20,
+      executed: 0,
+      skippedInsufficientFunds: 20,
+      executionRate: 0,
+      allPlannedExecutedRate: 0,
+    })
   })
 
   it('reports zero success and zero failure when no paths were run', () => {
