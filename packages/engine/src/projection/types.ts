@@ -184,6 +184,13 @@ export interface TaxYearInput {
  */
 export interface TaxCalculator {
   compute(input: TaxYearInput): number
+  /**
+   * Optional return-level enrichment used when the calculator can derive a
+   * federal input unavailable to the generic simulator, such as the state and
+   * local income tax entering Schedule A. `compute` remains authoritative;
+   * this hook keeps the published federal advisory detail on the same input.
+   */
+  federalInputFor?: (input: TaxYearInput) => TaxYearInput
 }
 
 export interface PersonYearState {

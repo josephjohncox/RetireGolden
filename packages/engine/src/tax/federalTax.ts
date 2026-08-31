@@ -119,21 +119,50 @@ export function saltCapForYear(pack: ParameterPack, year: number): number {
 }
 
 /**
+ * Deductible SALT after the temporary OBBBA high-income phase-out. For
+ * 2025–2029 the cap falls by 30 cents per MAGI dollar above the statutory
+ * threshold, but never below $10,000. The threshold starts at $500,000 in
+ * 2025 and rises by 1 percent per year. The engine's supported single and MFJ
+ * statuses use the same cap and threshold; MFS is not a supported filing arm.
+ */
+export function saltDeductionForYear(
+  pack: ParameterPack,
+  year: number,
+  magi: number,
+  stateAndLocalTaxesPaid: number,
+): number {
+  const cap = saltCapForYear(pack, year)
+  if (year < 2025 || year >= 2030) {
+    return Math.min(Math.max(0, stateAndLocalTaxesPaid), cap)
+  }
+  const threshold = 500_000 * Math.pow(1.01, year - 2025)
+  const phaseout = Math.max(0, magi - threshold) * 0.3
+  const effectiveCap = Math.max(10_000, cap - phaseout)
+  return Math.min(Math.max(0, stateAndLocalTaxesPaid), effectiveCap)
+}
+
+/**
  * Itemized-deduction total (SALT capped) from its components, or 0 when none.
  *
  * The cap comes from `saltCapForYear` rather than straight off the pack: for
  * most years the statutory schedule decides it outright, and the pack figure is
- * only the base the 2026-2029 steps compound from. The OBBBA high-income SALT
- * phase-out is not modeled.
+ * only the base the 2026-2029 steps compound from. `saltDeductionForYear` then
+ * applies the temporary high-income phase-out and $10,000 floor.
  */
 function itemizedTotal(
   pack: ParameterPack,
   items: TaxYearInput['itemizedDeductions'],
   year: number,
+  magi: number,
   contributionBase: number,
 ): number {
   if (!items) return 0
-  const salt = Math.min(Math.max(0, items.stateAndLocalTaxes), saltCapForYear(pack, year))
+  const salt = saltDeductionForYear(
+    pack,
+    year,
+    magi,
+    items.stateAndLocalTaxes,
+  )
   const charitable = charitableAfterFloor(Math.max(0, items.charitable), contributionBase, year)
   return salt + Math.max(0, items.mortgageInterest) + charitable
 }
@@ -571,7 +600,13 @@ export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
   const standardBase = standardDeduction(pack, taxStatus, input.peopleAged65Plus)
   // §170(b)(1)(H) defines the contribution base as adjusted gross income, and
   // the charitable deduction is below the line, so `agi` does not depend on it.
-  const itemizedBeforeSection68 = itemizedTotal(pack, input.itemizedDeductions, year, agi)
+  const itemizedBeforeSection68 = itemizedTotal(
+    pack,
+    input.itemizedDeductions,
+    year,
+    magi,
+    agi,
+  )
   // §68(b) applies this "after the application of any other limitation on the
   // allowance of any itemized deduction", so it runs on the assembled total and
   // nothing may be added to that total afterwards. The election below compares
@@ -603,7 +638,12 @@ export function computeFederalTax(input: TaxYearInput): FederalTaxDetail {
   // measured there too. Prorating §68 across components to answer a question
   // the statute does not ask would invent a number.
   const saltPreference = useItemized
-    ? Math.min(Math.max(0, input.itemizedDeductions?.stateAndLocalTaxes ?? 0), saltCapForYear(pack, year))
+    ? saltDeductionForYear(
+        pack,
+        year,
+        magi,
+        input.itemizedDeductions?.stateAndLocalTaxes ?? 0,
+      )
     : 0
   // §56(b)(1)(D) disallows "the standard deduction under section 63(c), the
   // deduction for personal exemptions under section 151, and the deduction

@@ -452,6 +452,28 @@ describe('runMonteCarloPaths + aggregate', () => {
     expect(seen).toEqual([1, 2, 3, 4, 5])
   })
 
+  it('streams each full projection before reducing the path', () => {
+    const plan = validate(basePlan())
+    const seen: Array<{ pathIndex: number; startYear: number; yearCount: number }> = []
+    runMonteCarloPaths(plan, {
+      startYear: 2026,
+      taxCalculator: noTax,
+      model,
+      seed: 3,
+      pathCount: 3,
+      firstPathIndex: 7,
+      onProjection: (projection, pathIndex) =>
+        seen.push({
+          pathIndex,
+          startYear: projection.startYear,
+          yearCount: projection.years.length,
+        }),
+    })
+    expect(seen.map((item) => item.pathIndex)).toEqual([7, 8, 9])
+    expect(seen.every((item) => item.startYear === 2026)).toBe(true)
+    expect(seen.every((item) => item.yearCount > 0)).toBe(true)
+  })
+
   it('adjustment metrics stay zeroed for plans without a guardrail policy', () => {
     const plan = validate(basePlan())
     const s = aggregateMonteCarlo(runMonteCarloPaths(plan, { startYear: 2026, taxCalculator: noTax, model, seed: 7, pathCount: 100 }))

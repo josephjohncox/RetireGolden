@@ -3085,13 +3085,27 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           mortgagePrincipal *
           (1 + (purchase.financing.type === 'mortgage' ? purchase.financing.interestPct : 0) / 100)
         const mortgagePayment = Math.min(mortgageWithInterest, monthlyPayment * 12)
+        const mortgageInterest = Math.min(
+          mortgagePayment,
+          mortgagePrincipal *
+            (purchase.financing.type === 'mortgage'
+              ? purchase.financing.interestPct / 100
+              : 0),
+        )
+        const endingMortgageBalance = Math.max(
+          0,
+          mortgageWithInterest - mortgagePayment,
+        )
         return {
           account,
           purchasePrice,
           cashOutlay: purchasePrice - mortgagePrincipal,
           mortgagePrincipal,
           mortgagePayment,
-          endingMortgageBalance: Math.max(0, mortgageWithInterest - mortgagePayment),
+          mortgageInterest,
+          averageMortgageBalance:
+            (mortgagePrincipal + endingMortgageBalance) / 2,
+          endingMortgageBalance,
           costBasis: purchasePrice + (purchase.basisAdjustment ?? 0),
           propertyCosts: annualPropertyCosts({
             account,
@@ -3107,6 +3121,15 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       (sum, candidate) => sum + candidate.mortgagePayment,
       0,
     )
+    const candidateMortgageInterest = propertyAcquisitionCandidates.reduce(
+      (sum, candidate) => sum + candidate.mortgageInterest,
+      0,
+    )
+    const candidateMortgageAverageBalance =
+      propertyAcquisitionCandidates.reduce(
+        (sum, candidate) => sum + candidate.averageMortgageBalance,
+        0,
+      )
     const candidatePropertyCosts = propertyAcquisitionCandidates.reduce(
       (sum, candidate) => sum + candidate.propertyCosts.total,
       0,
@@ -3125,6 +3148,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     )
 
     let debtService = candidateMortgageService
+    let mortgageInterestPaid = 0
+    let mortgageAverageBalance = 0
     for (const account of plan.accounts) {
       if (account.type !== 'debt') continue
       let bal = debtBalances.get(account.id) ?? 0
@@ -3148,7 +3173,10 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       ) continue
       let bal = propertyMortgageBalances.get(account.id) ?? 0
       if (bal <= 0) continue
-      bal *= 1 + account.purchase.financing.interestPct / 100
+      const openingMortgageBalance = bal
+      const mortgageInterest =
+        openingMortgageBalance * account.purchase.financing.interestPct / 100
+      bal += mortgageInterest
       const payoff =
         account.purchase.financing.payoffYear != null &&
         year >= account.purchase.financing.payoffYear
@@ -3159,6 +3187,8 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
             propertyMortgageAnnualPayments.get(account.id) ?? 0,
           )
       bal -= payment
+      mortgageInterestPaid += Math.min(payment, mortgageInterest)
+      mortgageAverageBalance += (openingMortgageBalance + bal) / 2
       if (bal <= EPSILON) {
         propertyMortgageBalances.delete(account.id)
         propertyMortgageAnnualPayments.delete(account.id)
@@ -7085,18 +7115,36 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       inheritedOrdinaryIncome +
       retirementActionOrdinaryIncome
 
-    // Itemized deductions (today's $ → nominal). The user's SALT estimate grows
-    // with general inflation, like spending; federal tax takes the greater of
-    // this and the standard deduction. Built here so the conversion/bracket
-    // sizers below target the same deduction the tax engine will use.
+    // Itemized deductions. Property tax and qualified acquisition-mortgage
+    // interest come from the annual ledger rather than a duplicated user
+    // estimate. Future-purchase mortgages are all post-2017 debt, so the
+    // planning-grade qualified-interest share uses the $750,000 aggregate
+    // average-balance limit from Pub. 936. A failed atomic purchase contributes
+    // neither its property tax nor its candidate mortgage interest.
     const itm = plan.strategies.itemizedDeductions
-    const itemizedDeductions = itm
-      ? {
-          stateAndLocalTaxes: itm.stateAndLocalTaxes * inflFactor,
-          mortgageInterest: itm.mortgageInterest * inflFactor,
-          charitable: itm.charitable * inflFactor,
-        }
-      : undefined
+    const itemizedDeductionsForAttempt = (): TaxYearInput['itemizedDeductions'] => {
+      const activeMortgageInterest =
+        mortgageInterestPaid +
+        (propertyAcquisitionBatchExecutes ? candidateMortgageInterest : 0)
+      const activeMortgageAverageBalance =
+        mortgageAverageBalance +
+        (propertyAcquisitionBatchExecutes
+          ? candidateMortgageAverageBalance
+          : 0)
+      const qualifiedMortgageInterest =
+        activeMortgageAverageBalance <= 750_000
+          ? activeMortgageInterest
+          : activeMortgageInterest * (750_000 / activeMortgageAverageBalance)
+      const stateAndLocalTaxes =
+        (itm?.stateAndLocalTaxes ?? 0) * inflFactor +
+        (expenses.propertyTax ?? 0)
+      const mortgageInterest =
+        (itm?.mortgageInterest ?? 0) * inflFactor + qualifiedMortgageInterest
+      const charitable = (itm?.charitable ?? 0) * inflFactor
+      return stateAndLocalTaxes > 0 || mortgageInterest > 0 || charitable > 0
+        ? { stateAndLocalTaxes, mortgageInterest, charitable }
+        : undefined
+    }
 
     // State-tax inputs (resolved once per year, before conversions so the
     // safety-net trim below can price a conversion's full tax bill).
@@ -7354,7 +7402,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           privateRetirementIncome: privateRetirementBase,
           publicPensionIncome: publicPensionBase,
           agesAlive,
-          itemizedDeductions,
+          itemizedDeductions: itemizedDeductionsForAttempt(),
         })
       }
       const baseTax = taxOf(0)
@@ -7459,7 +7507,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           taxExemptInterest: yearTaxExemptInterest,
           aca: acaSizingInput,
           inflationScale: inflFactorFrom(pack.year, year),
-          itemizedDeductions,
+          itemizedDeductions: itemizedDeductionsForAttempt(),
         })
         if (sized.ok) {
           desired = conversionGrossAmountForTaxable(sized.amount)
@@ -7770,7 +7818,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
           taxExemptInterest: yearTaxExemptInterest,
           aca: acaSizingInput,
           inflationScale: inflFactorFrom(pack.year, year),
-          itemizedDeductions,
+          itemizedDeductions: itemizedDeductionsForAttempt(),
         },
       )
       if (!sized.ok && sized.reason === 'bad_target') {
@@ -8051,7 +8099,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
             privateRetirementBase + withdrawalPlan.byCategory.traditional - iraNontaxableProbe,
           publicPensionIncome: publicPensionBase,
           agesAlive,
-          itemizedDeductions,
+          itemizedDeductions: itemizedDeductionsForAttempt(),
         }
         tax = taxCalculator.compute(taxInput)
         acaMagiProbe = null
@@ -8059,7 +8107,9 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
         acaSupportCodes = [...acaInitialSupportCodes]
         candidateHealthcare = healthcareExcludingAcaEnrollment + acaGrossEnrollmentPremium
         if (acaActive && acaContract) {
-          const federalProbe = computeFederalTax(taxInput)
+          const federalProbe = computeFederalTax(
+            taxCalculator.federalInputFor?.(taxInput) ?? taxInput,
+          )
           let acaMagiTaxExemptInterest = acaContract.taxExemptInterest
           if (acaContract.taxExemptInterest.state === 'known') {
             acaMagiTaxExemptInterest = {
@@ -8552,7 +8602,7 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
     // the realized income and deductions (roadmap V8 §4). Advisory only — the
     // engine doesn't auto-harvest. Federal-law boundary, so computed federally.
     // Capture the input + detail for planning surfaces; do not recompute later.
-    const advisoryFederalTaxInput: TaxYearInput = {
+    const baseAdvisoryFederalTaxInput: TaxYearInput = {
       year,
       filingStatus: filingStatusForYear,
       ordinaryIncome: ordinaryRealized,
@@ -8572,8 +8622,16 @@ export function simulatePlan(plan: Plan, opts: SimulateOptions): ProjectionResul
       ssBenefits: incomes.socialSecurity,
       peopleAged65Plus,
       inflationScale: limitGrowth,
-      itemizedDeductions,
+      state: residenceState,
+      stateResidency,
+      privateRetirementIncome: privateRetirementBase,
+      publicPensionIncome: publicPensionBase,
+      agesAlive,
+      itemizedDeductions: itemizedDeductionsForAttempt(),
     }
+    const advisoryFederalTaxInput =
+      taxCalculator.federalInputFor?.(baseAdvisoryFederalTaxInput) ??
+      baseAdvisoryFederalTaxInput
     const federalDetail = computeFederalTax(advisoryFederalTaxInput)
     minimumTaxCreditCarryforward =
       federalDetail.minimumTaxCreditCarryforward

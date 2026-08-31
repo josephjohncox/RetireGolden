@@ -32,6 +32,8 @@ export interface MonteCarloPathOptions {
   stochasticLongevity?: boolean
   /** Inject a probabilistic LTC care episode per path (roadmap V6); null = off. */
   ltcShock?: LtcShockParams | null
+  /** Receives each completed full projection before it is reduced to summary data. */
+  onProjection?: (projection: ReturnType<typeof simulatePlan>, pathIndex: number) => void
   /** Called after each completed path (drives progress UI). */
   onPathDone?: (completed: number) => void
 }
@@ -124,6 +126,7 @@ export function runMonteCarloPaths(plan: Plan, opts: MonteCarloPathOptions): Mon
       deathAgeByPersonId,
       horizonEndYear,
     })
+    opts.onProjection?.(result, first + i)
     const projectionSummary = summarizeProjection(pathPlan, result)
     startYear = result.startYear
     endYear = result.endYear

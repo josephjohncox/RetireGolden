@@ -11,6 +11,7 @@ import {
   computeFederalTax,
   createFederalTaxCalculator,
   saltCapForYear,
+  saltDeductionForYear,
   taxableSocialSecurity,
 } from './federalTax.js'
 
@@ -531,6 +532,21 @@ describe('SALT cap schedule', () => {
       expect(saltCapForYear(pack, 2024)).toBe(10_000)
       expect(saltCapForYear(pack, 2018)).toBe(10_000)
       expect(saltCapForYear(pack, 2017)).toBe(Number.POSITIVE_INFINITY)
+    })
+
+    it('phases out the temporary cap above the statutory MAGI threshold', () => {
+      const pack = packForYear(2026).pack
+
+      expect(saltDeductionForYear(pack, 2026, 505_000, 60_000)).toBeCloseTo(
+        40_400,
+        6,
+      )
+      expect(saltDeductionForYear(pack, 2026, 525_000, 60_000)).toBeCloseTo(
+        34_400,
+        6,
+      )
+      expect(saltDeductionForYear(pack, 2026, 700_000, 60_000)).toBe(10_000)
+      expect(saltDeductionForYear(pack, 2030, 700_000, 60_000)).toBe(10_000)
     })
   })
 })

@@ -129,6 +129,7 @@ describe('dated property acquisition', () => {
       value: 300_000,
       plannedSaleYear: null,
       expectedNetProceeds: null,
+      propertyTaxAnnual: 12_000,
       purchase: {
         year: 2028,
         purchasePrice: 300_000,
@@ -162,8 +163,20 @@ describe('dated property acquisition', () => {
     expect(acquired.propertyMortgageBalances).toEqual({
       'mortgaged-home': expect.closeTo(endingPrincipal, 2),
     })
-    expect(acquired.withdrawals.cash).toBeCloseTo(60_000 + annualPayment, 2)
-    expect(acquired.netWorth).toBeCloseTo(1_000_000 - principal * 0.06, 2)
+    expect(acquired.withdrawals.cash).toBeCloseTo(
+      60_000 + annualPayment + 12_000,
+      2,
+    )
+    expect(acquired.netWorth).toBeCloseTo(
+      1_000_000 - principal * 0.06 - 12_000,
+      2,
+    )
+    expect(
+      acquired.advisoryFederalTax?.input.itemizedDeductions,
+    ).toMatchObject({
+      stateAndLocalTaxes: 12_000,
+      mortgageInterest: expect.closeTo(14_400, 2),
+    })
     expect(nextYear.expenses.debtService).toBeCloseTo(annualPayment, 2)
     expect(nextYear.propertyMortgageBalances?.['mortgaged-home']).toBeCloseTo(
       endingPrincipal * 1.06 - annualPayment,
@@ -310,6 +323,55 @@ describe('dated property acquisition', () => {
     expect(year.targetShortfall).toBe(0)
     expect(year.investableTotal).toBeCloseTo(100_000, 2)
     expect(year.netWorth).toBeCloseTo(100_000, 2)
+    expect(year.advisoryFederalTax?.input.itemizedDeductions).toBeUndefined()
+  })
+
+  it('limits post-2017 acquisition-mortgage interest to $750,000 of average debt', () => {
+    const plan = basePlan()
+    const cash = plan.accounts.find((account) => account.type === 'cash')!
+    if (cash.type !== 'cash') throw new Error('expected cash account')
+    cash.balance = 3_000_000
+    plan.accounts.push({
+      type: 'property',
+      id: 'limited-interest-home',
+      name: 'Limited interest home',
+      ownerPersonId: null,
+      annualReturnPct: null,
+      value: 1_800_000,
+      plannedSaleYear: null,
+      expectedNetProceeds: null,
+      propertyTaxAnnual: 21_600,
+      purchase: {
+        year: 2028,
+        purchasePrice: 1_800_000,
+        purchasePriceBasis: 'purchaseYearNominal',
+        financing: {
+          type: 'mortgage',
+          downPaymentPct: 30,
+          interestPct: 5.3,
+          termYears: 30,
+        },
+      },
+    } as Account)
+
+    const year = run(plan).years.find((entry) => entry.year === 2028)!
+    const principal = 1_260_000
+    const monthlyRate = 0.053 / 12
+    const months = 30 * 12
+    const monthlyPayment =
+      principal * monthlyRate * Math.pow(1 + monthlyRate, months) /
+      (Math.pow(1 + monthlyRate, months) - 1)
+    const annualPayment = monthlyPayment * 12
+    const endingBalance = principal * 1.053 - annualPayment
+    const averageBalance = (principal + endingBalance) / 2
+    const expectedDeduction = principal * 0.053 * (750_000 / averageBalance)
+
+    expect(
+      year.advisoryFederalTax?.input.itemizedDeductions,
+    ).toMatchObject({
+      stateAndLocalTaxes: 21_600,
+      mortgageInterest: expect.closeTo(expectedDeduction, 2),
+    })
   })
 
   it('repays the embedded mortgage and uses acquisition basis when the property is sold', () => {
